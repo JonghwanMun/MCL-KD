@@ -533,7 +533,8 @@ class EnsembleLoss(nn.Module):
         self.logger = io_utils.get_logger("Train")
 
         self.use_gpu = utils.get_value_from_dict(config, "use_gpu", True)
-        self.use_assignment_model = utils.get_value_from_dict(config, "use_assignment_model", False)
+        self.use_assignment_model = utils.get_value_from_dict(
+            config, "use_assignment_model", False)
         self.beta = utils.get_value_from_dict(config, "beta", 0.75)
         self.k = utils.get_value_from_dict(config, "num_overlaps", 2)
         self.m = utils.get_value_from_dict(config, "num_models", 3)
@@ -544,6 +545,8 @@ class EnsembleLoss(nn.Module):
         self.assign_using_accuracy = \
                 utils.get_value_from_dict(config, "assign_using_accuracy", False)
         self.version = utils.get_value_from_dict(config, "version", "KD-MCL")
+        self.use_ensemble_loss = utils.get_value_from_dict(
+            config, "use_ensemble_loss", False)
 
         if self.use_assignment_model:
             self.assignment_criterion = nn.CrossEntropyLoss()
@@ -769,8 +772,8 @@ class EnsembleLoss(nn.Module):
                             coeffi += selected_mask
 
                     finally_selected = coeffi.ge(1.0).float()
-                    cf = net_utils.where(finally_selected, one_mask, beta_mask)
-                    loss = cf * F.cross_entropy(logit_list[mi], sampled_labels, reduce=False)
+                    coeff = net_utils.where(finally_selected, one_mask, beta_mask)
+                    loss = coeff * F.cross_entropy(logit_list[mi], sampled_labels, reduce=False)
                     if mi == 0:
                         total_loss = (loss.sum()) / self.m / B / self.k
                     else:
@@ -789,6 +792,12 @@ class EnsembleLoss(nn.Module):
                     oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
                 , end=" ")
 
+        if self.use_ensemble_loss:
+            logits = torch.stack(logit_list, 0).mean(dim=0)
+            probs = F.softmax(logits, dim=1)
+            ensemble_loss = F.cross_entropy(probs, labels)
+            total_loss += ensemble_loss
+            print("EL {:.3f}".format(ensemble_loss.data[0]), end=" ")
 
         if self.version != "IE":
             print("{:03d} | {:03d} | {:03d}".format(
