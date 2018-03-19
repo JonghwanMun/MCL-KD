@@ -542,6 +542,8 @@ class EnsembleLoss(nn.Module):
         self.num_labels = utils.get_value_from_dict(config, "num_labels", 28)
         self.use_initial_assignment = \
                 utils.get_value_from_dict(config, "use_initial_assignment", False)
+        self.use_KD_loss_with_ensemble = \
+                utils.get_value_from_dict(config, "use_KD_loss_with_ensemble", False)
         self.assign_using_accuracy = \
                 utils.get_value_from_dict(config, "assign_using_accuracy", False)
         self.version = utils.get_value_from_dict(config, "version", "KD-MCL")
@@ -596,13 +598,20 @@ class EnsembleLoss(nn.Module):
             """ obtain assignments (sorting oracle loss) """
             # compute KL divergence with teacher distribution for each model
             teacher_list = inp[-1]
-            KLD_list = [net_utils.compute_kl_div( \
-                student_logit, teacher_logit, self.tau) \
-                for student_logit, teacher_logit \
-                in zip(logit_list, teacher_list)] # m*[B]
+            if self.use_KD_loss_with_ensemble:
+                print("Ensembled teacher logit", end=" ")
+                teacher_logit = sum(teacher_list) / self.m
+                KLD_list = [net_utils.compute_kl_div( \
+                    student_logit, teacher_logit, self.tau) \
+                    for student_logit in logit_list] # m*[B]
+            else:
+                KLD_list = [net_utils.compute_kl_div( \
+                    student_logit, teacher_logit, self.tau) \
+                    for student_logit, teacher_logit \
+                    in zip(logit_list, teacher_list)] # m*[B]
 
             # compute or get assignments
-            if self.use_initial_assignment and (len(inp) == 4):
+            if self.use_initial_assignment:
                 print("KD-MCL using pre-computed assignments", end=" ")
                 assignments = inp[-2].clone()
                 if assignments.dim() == 1:
@@ -613,6 +622,9 @@ class EnsembleLoss(nn.Module):
                     raise ValueError("Error: dim(assignments) > 2")
                 self.assignments = assignments.cpu().data # [B, k]
 
+                # re-assign based on accuracy
+                # for assigned data, only when assigned model is failure and
+                # other model predicts correctly, we replace the assignment
                 if self.assign_using_accuracy:
                     prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0) \
                                  for logit in logit_list] # m*[B,C]
