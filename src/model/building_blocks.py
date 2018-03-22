@@ -928,7 +928,7 @@ class KLDLoss(nn.Module):
 
         self.tau = utils.get_value_from_dict(config["model"], "tau", 1)
         self.reduce = utils.get_value_from_dict(config["model"], "loss_reduce", True)
-        self.apply_softmax_on_teacher = False
+        self.apply_softmax_on_teacher = True
 
     def forward(self, logits, gts):
         # This method accepts ground-truth as second argument
