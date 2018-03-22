@@ -18,6 +18,7 @@ from src.utils import accumulator, utils, io_utils, vis_utils, net_utils
 class Ensemble(VirtualVQANetwork):
     def __init__(self, config):
         super(Ensemble, self).__init__(config) # Must call super __init__()
+        self.classname = "ENSEMBLE"
 
         # options for loading model
         self.base_model_type = utils.get_value_from_dict(
@@ -439,6 +440,7 @@ class Ensemble(VirtualVQANetwork):
 class SAN(VirtualVQANetwork):
     def __init__(self, config):
         super(SAN, self).__init__(config) # Must call super __init__()
+        self.classname = "SAN"
 
         self.use_gpu = utils.get_value_from_dict(config["model"], "use_gpu", True)
         loss_reduce = utils.get_value_from_dict(config["model"], "loss_reduce", True)
@@ -521,16 +523,38 @@ class SAAA(VirtualVQANetwork):
     def __init__(self, config):
         super(SAAA, self).__init__(config) # Must call super __init__()
 
+        self.classname = "SAAA"
         self.use_gpu = utils.get_value_from_dict(
             config["model"], "use_gpu", True)
         loss_reduce = utils.get_value_from_dict(
             config["model"], "loss_reduce", True)
 
+        # options for KLD with base model
+        self.use_knowledge_distillation = \
+            utils.get_value_from_dict(
+                config["model"], "use_knowledge_distillation", False)
+        base_model_ckpt_path = \
+                utils.get_value_from_dict(
+                    config["model"], "base_model_ckpt_path", "None")
+        if self.use_knowledge_distillation:
+            assert base_model_ckpt_path != "None", \
+                "checkpoint path for base model should be given"
+
         # build layers
         self.qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
         self.saaa = building_blocks.RevisedStackedAttention(config["model"])
         self.classifier = building_blocks.MLP(config["model"], "answer")
-        self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
+        if self.use_knowledge_distillation:
+            base_config = copy.deepcopy(config)
+            base_config["model"]["use_knowledge_distillation"] = False
+            self.base_model = SAAA(base_config)
+            self.base_model.load_checkpoint(base_model_ckpt_path)
+            if self.use_gpu and torch.cuda.is_available():
+                self.base_model.cuda()
+            self.base_model.eval()
+            self.criterion = building_blocks.KLDLoss(config)
+        else:
+            self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
 
         # set layer names (all and to be updated)
         self.model_list = ["qst_emb_net", "saaa", "classifier", "criterion"]
@@ -557,7 +581,13 @@ class SAAA(VirtualVQANetwork):
         self.logits = self.classifier(multimodal_feats) # criterion input
 
         others = saaa_outputs[1]
-        return [self.logits, others]
+        if self.use_knowledge_distillation:
+            print("Update using KLD", end="\r")
+            teacher_logits = self.base_model.forward(data)[0]
+            criterion_inp = [self.logits, teacher_logits]
+        else:
+            criterion_inp = self.logits
+        return [criterion_inp, others]
 
     def save_results(self, data, prefix, mode="train", compute_loss=False):
         """ Get qualitative results (attention weights) and save them
@@ -580,6 +610,8 @@ class SAAA(VirtualVQANetwork):
                 loss = self.loss_fn(logits, data[-2], count_loss=False)
 
             # visualize result
+            if self.use_knowledge_distillation:
+                logits = logits[0]
             num_stacks = att_weights.size(1)
             att_weights = att_weights.data.cpu()
             qualitative_results = [[att_weights[:,i,:,:]

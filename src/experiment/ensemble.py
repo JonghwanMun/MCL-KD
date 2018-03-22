@@ -17,7 +17,7 @@ from torch.autograd import Variable
 from src.model import building_networks
 from src.dataset import clevr_dataset, vqa_dataset
 from src.experiment import common_functions as cmf
-from src.utils import accumulator, timer, utils, io_utils
+from src.utils import accumulator, timer, utils, io_utils, net_utils
 
 """ Get parameters """
 def _get_argument_params():
@@ -32,9 +32,11 @@ def _get_argument_params():
 	parser.add_argument("--output_filename",
         default="ensemble", help="filename for predictions.")
 	parser.add_argument("--selection_path",
-        default="data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/"
-                     + "all_questions_use_zero_token_max_qst_len_45/"
-                     + "m3_o1_selection_train.h5", help="Path to selection file.")
+                     default="None",
+#        default="data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/"
+#                     + "all_questions_use_zero_token_max_qst_len_45/"
+#                     + "m3_o1_selection_train.h5",
+                     help="Path to selection file.")
 	parser.add_argument("--debug_mode" , action="store_true", default=False,
 		help="Train the model in debug mode.")
 
@@ -88,6 +90,7 @@ def ensemble(config):
     net_configs = []
     for i in range(len(config["checkpoint_paths"])):
         net_configs.append(io_utils.load_yaml(config["config_paths"][i]))
+        net_configs[i] = M.override_config_from_loader(net_configs[i], dset)
         nets.append(M(net_configs[i]))
         nets[i].bring_loader_info(dset)
         apply_cc_after = utils.get_value_from_dict(
@@ -135,10 +138,11 @@ def ensemble(config):
         correct = 0
         for i in range(len(nets)):
             outputs = nets[i].evaluate(batch)
-            prob = F.softmax(outputs[1], dim=1)
+            #prob = outputs[1]
+            prob = F.softmax(outputs[1], dim=1) # 2018.3.21 4:50 pm
 
             # count correct numbers for each model
-            val, idx = prob.clone().data.cpu().max(dim=1)
+            val, idx = net_utils.get_data(prob).max(dim=1)
             correct = torch.eq(idx, gt)
             num_correct = torch.sum(correct)
             modelname = "M{}".format(i)
@@ -180,15 +184,16 @@ def ensemble(config):
         # epoch done
 
     # print accuracy
-    print("M0 top1 accuracy: {:.3f}".format(counters["M0"].get_average()))
-    print("M1 top1 accuracy: {:.3f}".format(counters["M1"].get_average()))
-    print("M2 top1 accuracy: {:.3f}".format(counters["M2"].get_average()))
+    for m in range(len(nets)):
+        print("M{} top1 accuracy: {:.3f}".format(m, counters["M{}".format(m)].get_average()))
     print("Ensembled top1 accuracy: {:.3f}".format(counters["ensemble"].get_average()))
     print("Ensembled oracle accuracy: {:.3f}".format(counters["oracle"].get_average()))
 
     save_dir = os.path.join("results", "ensemble_predictions")
+    io_utils.check_and_create_dir(save_dir)
     io_utils.write_json(os.path.join(save_dir, config["out"]+".json"), predictions)
-    np.save(os.path.join(save_dir, "mapping_count"), cnt_mapping)
+    if with_selection:
+        np.save(os.path.join(save_dir, "mapping_count"), cnt_mapping)
 
 def main(params):
     # loading configuration and setting environment

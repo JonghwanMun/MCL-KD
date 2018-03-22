@@ -26,7 +26,7 @@ def where(cond, x1, x2):
     return (cond * x1) + ((1-cond) * x2)
 
 def compute_kl_div(inputs, targets, tau=-1, \
-                    use_entropy_term=False, reduce=False):
+                    apply_softmax_on_target=True, reduce=False):
     """
     N = inputs.size(0)
     C = inputs.size(1)
@@ -42,12 +42,15 @@ def compute_kl_div(inputs, targets, tau=-1, \
 
     if tau > 0:
         inputs = inputs / tau
-        targets = targets / tau
+        if apply_softmax_on_target:
+            targets = targets / tau
 
     logP = F.log_softmax(inputs, dim=1)
-    targets = F.softmax(targets, dim=1)
-    #targets = F.softmax(Variable(targets, requires_grad=False), dim=1)
-    #kld_loss = -(targets * logP).sum(dim=1) # TODO: mean? sum?
-    kld_loss = -(targets * logP).mean(dim=1) # TODO: mean? sum?
+    if apply_softmax_on_target:
+        targets = F.softmax(targets, dim=1)
+    kld_loss = -(targets * logP).mean(dim=1)
+
+    if reduce:
+        kld_loss = kld_loss.mean()
 
     return kld_loss

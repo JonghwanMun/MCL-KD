@@ -197,7 +197,7 @@ class VirtualVQANetwork(VirtualNetwork):
             logits list of m * [batch_size, num_answers]
             gts: ground-truth answers [batch_size]
         """
-        if type(logits) == type(list()):
+        if self.classname == "ENSEMBLE":
             # compute probabilities and average them
             B = logits[0].size(0)
             prob_list = [F.softmax(logit, dim=1) for logit in logits]
@@ -205,10 +205,12 @@ class VirtualVQANetwork(VirtualNetwork):
             probs = torch.mean(probs, dim=0) # [B, num_answers]
 
         else:
+            if self.use_knowledge_distillation:
+                logits = logits[0]
             # compute probabilities and average them
             B = logits.size(0)
             probs = F.softmax(logits, dim=1)
-            probs = net_utils.get_data(probs)
+            #probs = net_utils.get_data(probs)
 
         # count the number of correct predictions
         val, max_idx = net_utils.get_data(probs).max(dim=1)

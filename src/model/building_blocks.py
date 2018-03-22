@@ -574,20 +574,28 @@ class EnsembleLoss(nn.Module):
         assert (ce_loss_tensor.dim() == 2) and (ce_loss_tensor.size(1) == B), \
                 "Loss of base network should not be reduced (m, B)"
 
+        log_txt = ""
         self.assignments = None
         if self.use_assignment_model and self.version != "IE":
             assignment_logits = inp[2]
 
         if self.version == "IE":
             # naive independent ensemble learning
-            print("IE ", end="\r")
+            txt = "IE "
+            print(txt, end="\r")
+            if (self.iteration % (500)) == 0:
+                self.logger.info(txt)
+
             total_loss = sum(ce_loss_list)
             total_loss = total_loss.sum() / self.m / B
             # End of IE
 
         elif self.version == "sMCL":
             # stochastic MCL (sMCL) [Stefan Lee et. al., 2016] (https://arxiv.org/abs/1606.07839)
-            print("sMCL", end=" ")
+            txt = "sMCL "
+            print(txt, end="")
+            if (self.iteration % (500)) == 0:
+                log_txt += txt
             min_val, min_idx = ce_loss_tensor.t().topk(self.k, dim=1, largest=False)
             self.assignments = net_utils.get_data(min_idx) # [B,k]
             min_idx = min_idx.t()
@@ -597,22 +605,14 @@ class EnsembleLoss(nn.Module):
         elif self.version == "KD-MCL":
             """ obtain assignments (sorting oracle loss) """
             # compute KL divergence with teacher distribution for each model
-            teacher_list = inp[-1]
-            if self.use_KD_loss_with_ensemble:
-                print("Ensembled teacher logit", end=" ")
-                teacher_logit = sum(teacher_list) / self.m
-                KLD_list = [net_utils.compute_kl_div( \
-                    student_logit, teacher_logit, self.tau) \
-                    for student_logit in logit_list] # m*[B]
-            else:
-                KLD_list = [net_utils.compute_kl_div( \
-                    student_logit, teacher_logit, self.tau) \
-                    for student_logit, teacher_logit \
-                    in zip(logit_list, teacher_list)] # m*[B]
+            KLD_list = self.compute_kld(logit_list, inp[-1])
 
             # compute or get assignments
             if self.use_initial_assignment:
-                print("KD-MCL using pre-computed assignments", end=" ")
+                txt = "KD-MCL using pre-computed assignments "
+                print(txt, end="")
+                if (self.iteration % (500)) == 0:
+                    log_txt += txt
                 assignments = inp[-2].clone()
                 if assignments.dim() == 1:
                     min_idx = assignments.clone().view(1, assignments.size(0))
@@ -638,8 +638,6 @@ class EnsembleLoss(nn.Module):
                     selected_corrects = correct_tensors.gather(0, min_idx)
                     new_assignments = np.zeros((B, self.k))
                     origin_assignments = self.assignments.numpy() # [B,k]
-                    #print("corrects:", correct_tensors)
-                    #print("origin_assignments:", self.assignments)
                     num_changed = 0
                     for b in range(B):
                         if (selected_corrects[:,b].sum() == 0) \
@@ -664,8 +662,10 @@ class EnsembleLoss(nn.Module):
                     # overwrite assignments
                     self.assignments = torch.from_numpy(new_assignments).long()
                     min_idx = Variable(self.assignments.clone().t())
-                    #print("replaced_assignments:", self.assignments)
-                    print("{:03d} changed".format(num_changed), end=" ")
+                    txt = "{:03d} changed ".format(num_changed)
+                    print(txt, end="")
+                    if (self.iteration % (500)) == 0:
+                        log_txt += txt
 
             else:
                 # compute oracle loss
@@ -687,14 +687,16 @@ class EnsembleLoss(nn.Module):
                 min_idx = min_idx.t() # [k,B]
 
                 KLD_tensor = torch.stack(KLD_list, dim=0) # [m,B]
-                print("KD-MCL CE {} | KLD {} | ORACLE {}".format(
+                txt = "KD-MCL CE {} | KLD {} | ORACLE {} ".format(
                     "/".join("{:.3f}".format(
                         ce_loss_tensor[i,0].data[0]) for i in range(self.m)),
                     "/".join("{:6.3f}".format(
                         KLD_tensor[i,0].data[0]) for i in range(self.m)),
                     "/".join("{:6.3f}".format(
                         oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
-                    , end=" ")
+                print(txt, end="")
+                if (self.iteration % (500)) == 0:
+                    log_txt += txt
 
             # compute loss with assignments
             total_loss = 0
@@ -707,39 +709,87 @@ class EnsembleLoss(nn.Module):
                     cur_loss = net_utils.where(selected_mask,
                             ce_loss_list[mi], self.beta*KLD_list[mi])
                     total_loss += cur_loss.sum()
-            total_loss = total_loss / self.m / B / self.k
+            #total_loss = total_loss / self.m / B / self.k
+            total_loss = total_loss / B
             # End of KD-MCL
+
+        elif self.version == "ALL":
+            txt = "ALL loss "
+            print(txt, end="")
+            if (self.iteration % (500)) == 0:
+                log_txt += txt
+            # compute KL divergence with teacher distribution for each model
+            KLD_list = self.compute_kld(logit_list, inp[-1])
+            # compute KL divergence with Uniform distribution for each model
+            prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
+                         for logit in logit_list] # m*[B,C]
+            ENT_list = [(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
+                            for prob in prob_list] # m*[B]
+
+            # compute oracle loss
+            oracle_loss_list = []
+            for mi in range(self.m):
+                if (mi+1) != self.m:
+                    oracle_loss_list.append( ce_loss_list[mi] \
+                        + self.beta * (sum(KLD_list[:mi])+sum(KLD_list[mi+1:])) \
+                        + 0.5 * (sum(ENT_list[:mi])+sum(ENT_list[mi+1:])) \
+                    ) # m * [B,]
+                else:
+                    oracle_loss_list.append(ce_loss_list[mi] \
+                        + self.beta * sum(KLD_list[:mi]) \
+                        + 0.5 * sum(ENT_list[:mi])
+                    ) # m*[B]
+
+            # compute assignments
+            oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
+            min_val, min_idx = oracle_loss_tensor.t().topk(
+                    self.k, dim=1, largest=False) # [B,k]
+            self.assignments = net_utils.get_data(min_idx) # [B,k]
+            min_idx = min_idx.t() # [k,B]
+
+            # compute loss with assignments
+            total_loss = 0
+            for mi in range(self.m):
+                for topk in range(self.k):
+                    selected_mask = min_idx[topk].eq(mi).float() # [B]
+                    if self.use_gpu and torch.cuda.is_available():
+                        selected_mask = selected_mask.cuda()
+
+                    cur_loss = net_utils.where(selected_mask,
+                            ce_loss_list[mi], self.beta*KLD_list[mi]+0.5*ENT_list[mi])
+                    total_loss += cur_loss.sum()
+            #total_loss = total_loss / self.m / B / self.k
+            total_loss = total_loss / B
+            # end of ALL
 
         else:
             """ compute assignments (sorting confident oracle loss) """
             # compute KL divergence with Uniform distribution for each model
             prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
                          for logit in logit_list] # m*[B,C]
-            print("CMCL P {:.3f}/{:.3f} | {:.3f}/{:.3f} | {:.3f}/{:.3f}".format(
-                prob_list[0][0].min().data[0], prob_list[0][0].max().data[0],
-                prob_list[1][0].min().data[0], prob_list[1][0].max().data[0],
-                prob_list[2][0].min().data[0], prob_list[2][0].max().data[0]),
-                end="   ")
-            entropy_list = [(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
+            ENT_list = [(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
                             for prob in prob_list] # m*[B]
             oracle_loss_list = []
             for mi in range(self.m):
                 if (mi+1) != self.m:
                     oracle_loss_list.append( ce_loss_list[mi] \
-                        + self.beta*(sum(entropy_list[:mi])+sum(entropy_list[mi+1:]))) # m * [B,]
+                        + self.beta*(sum(ENT_list[:mi])+sum(ENT_list[mi+1:]))) # m * [B,]
                 else:
                     oracle_loss_list.append(ce_loss_list[mi] \
-                            + self.beta*sum(entropy_list[:mi])) # m*[B]
+                            + self.beta*sum(ENT_list[:mi])) # m*[B]
 
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
-            entropy_tensor = torch.stack(entropy_list, dim=0) # [m,B]
+            entropy_tensor = torch.stack(ENT_list, dim=0) # [m,B]
 
             min_val, min_idx = oracle_loss_tensor.t().topk(self.k, dim=1, largest=False) # [B,k]
             self.assignments = net_utils.get_data(min_idx) # [B,k]
             min_idx = min_idx.t() # [k,B]
 
             if self.version == "CMCL_v0":
-                print("V0", end=" ")
+                txt = "CMCL v0 "
+                print(txt, end="")
+                if (self.iteration % (500)) == 0:
+                    log_txt += txt
                 total_loss = 0
                 for mi in range(self.m):
                     for topk in range(self.k):
@@ -748,13 +798,16 @@ class EnsembleLoss(nn.Module):
                             selected_mask = selected_mask.cuda()
 
                         total_loss += net_utils.where(selected_mask,
-                                ce_loss_list[mi], self.beta*entropy_list[mi]).sum()
-                total_loss += (self.beta*sum(entropy_list)).sum()
+                                ce_loss_list[mi], self.beta*ENT_list[mi]).sum()
+                total_loss += (self.beta*sum(ENT_list)).sum()
                 total_loss = total_loss / self.m / B
                 # end of CMCL v0
 
             elif self.version == "CMCL_v1":
-                print("V1", end=" ")
+                txt = "CMCL v1 "
+                print( txt, end="")
+                if (self.iteration % (500)) == 0:
+                    log_txt += txt
                 # sampling stochastically labels
                 np_random_labels = np.random.randint(0, self.num_labels, size=(self.m, B))
                 random_labels = Variable(
@@ -787,36 +840,46 @@ class EnsembleLoss(nn.Module):
                     coeff = net_utils.where(finally_selected, one_mask, beta_mask)
                     loss = coeff * F.cross_entropy(logit_list[mi], sampled_labels, reduce=False)
                     if mi == 0:
-                        total_loss = (loss.sum()) / self.m / B / self.k
+                        #total_loss = (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
+                        #total_loss = (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
+                        total_loss = loss.sum() / self.m / B
                     else:
-                        total_loss += (loss.sum()) / self.m / B / self.k
+                        #total_loss += (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
+                        #total_loss += (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
+                        total_loss += (loss.sum() / B / self.m)
                 # end of CMCL v1
 
             else:
                 raise NotImplementedError("Not supported version for CMCL Loss %s" % self.version)
 
-            print("CE {} || ENT {} | ORACLE {}".format(
+            txt = "CE {} || ENT {} | ORACLE {} ".format(
                 "/".join("{:.3f}".format(
                     ce_loss_tensor[i,0].data[0]) for i in range(self.m)),
-                "/".join("{:6.3f}".format(
+                "/".join("{:6.2f}".format(
                     entropy_tensor[i,0].data[0]) for i in range(self.m)),
-                "/".join("{:6.3f}".format(
+                "/".join("{:6.2f}".format(
                     oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
-                , end=" ")
+            print(txt, end="")
+            if (self.iteration % (500)) == 0:
+                log_txt += txt
 
         if self.use_ensemble_loss:
             logits = torch.stack(logit_list, 0).mean(dim=0)
             probs = F.softmax(logits, dim=1)
             ensemble_loss = F.cross_entropy(probs, labels)
             total_loss += ensemble_loss
-            print("EL {:.3f}".format(ensemble_loss.data[0]), end=" ")
+            txt = "EL {:.3f} ".format(ensemble_loss.data[0])
+            print(txt, end="")
+            if (self.iteration % (500)) == 0:
+                log_txt += txt
 
         if self.version != "IE":
-            print("{:03d} | {:03d} | {:03d}".format(
-                min_idx[0].eq(0).sum().data[0],
-                min_idx[0].eq(1).sum().data[0],
-                min_idx[0].eq(2).sum().data[0]),
-                end="\r") # [B]
+            txt = "|".join("{:03d}".format(
+                min_idx[0].eq(i).sum().data[0])
+                for i in range(self.m))
+            print(txt, end="\r")
+            if (self.iteration % (500)) == 0:
+                self.logger.info(log_txt + txt)
 
         # learn to predict assignment using question features
         if self.use_assignment_model and (self.version != "IE"):
@@ -836,6 +899,46 @@ class EnsembleLoss(nn.Module):
         self.iteration += 1
 
         return total_loss
+
+    def compute_kld(self, logit_list, teacher_list):
+        # compute KL divergence with teacher distribution for each model
+        if self.use_KD_loss_with_ensemble:
+            print("Ensembled teacher logit ", end="")
+            # logit version
+            teacher_logit = sum(teacher_list) / self.m
+            KLD_list = [net_utils.compute_kl_div( \
+                student_logit, teacher_logit, self.tau) \
+                for student_logit in logit_list] # m*[B]
+            # prob version
+            teacher_prob = sum([F.softmax(tl, dim=1) for tl in teacher_list]) / self.m
+            KLD_list = [net_utils.compute_kl_div( \
+                student_logit, teacher_prob, self.tau, False) \
+                for student_logit in logit_list] # m*[B]
+        else:
+            KLD_list = [net_utils.compute_kl_div( \
+                student_logit, teacher_logit, self.tau) \
+                for student_logit, teacher_logit \
+                in zip(logit_list, teacher_list)] # m*[B]
+        return KLD_list
+
+
+class KLDLoss(nn.Module):
+    def __init__(self, config):
+        super(KLDLoss, self).__init__() # Must call super __init__()
+
+        self.tau = utils.get_value_from_dict(config["model"], "tau", 1)
+        self.reduce = utils.get_value_from_dict(config["model"], "loss_reduce", True)
+        self.apply_softmax_on_teacher = False
+
+    def forward(self, logits, gts):
+        # This method accepts ground-truth as second argument
+        # to be consistent with VirtualNetwork Class.
+        # Thus, we do not use gts to compute KL divergence loss.
+        student = logits[0]
+        teacher = logits[1]
+        return net_utils.compute_kl_div(student, teacher,
+                    self.tau, self.apply_softmax_on_teacher, self.reduce)
+
 
 
 class MultipleCriterion(nn.Module):
