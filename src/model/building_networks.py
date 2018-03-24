@@ -52,7 +52,9 @@ class Ensemble(VirtualVQANetwork):
             num_base_models = len(base_model_ckpt_path)
             self.base_model = []
             for i in range(num_base_models):
-                self.base_model.append(self.M(config))
+                base_config = copy.deepcopy(config)
+                base_config["use_knowledge_distillation"] = False
+                self.base_model.append(self.M(base_config))
                 self.base_model[i].load_checkpoint(base_model_ckpt_path[i])
                 if self.use_gpu and torch.cuda.is_available():
                     self.base_model[i].cuda()
