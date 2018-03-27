@@ -1,0 +1,14 @@
+vqa_root: "./data/VQA_v2.0"
+split_options:
+ - train
+ - val
+ - test
+ - test-dev
+annotation_json: "annotations/v2_mscoco_%s2014_annotations.json"
+question_json: "annotations/v2_OpenEnded_mscoco_%s2014_questions.json"
+complementary_pair_json: "annotations/v2_mscoco_%s2014_complementary_pairs.json"
+image_path: "%s2014/COCO_%s2014_%012d.jpg"
+test_annotation_json: "annotations/v2_mscoco_%s2014_annotations.json"
+test_question_json: "annotations/v2_OpenEnded_mscoco_test2015_questions.json"
+test_dev_question_json: "annotations/v2_OpenEnded_mscoco_test-dev2015_questions.json"
+test_image_path: "%s2015/COCO_%s2015_%012d.jpg"

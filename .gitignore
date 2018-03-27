@@ -1,0 +1,26 @@
+# Ipython notebook
+*.ipynb
+.ipynb_checkpoints
+ipython_notebooks/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.cache
+
+# external sources
+#src/external/refer
+
+# data
+data/CLEVR_v1.0
+data/VQA_v2.0
+
+# options
+src/experiment/options
+
+# misc files/directories
+.gitignore
+results/
+logs/
+src/analysis

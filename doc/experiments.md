@@ -1,29 +1,29 @@
 # Experiments
 
-## CLEVR Experiments
+### Training VQA Network using KD-MCL
 
-### Training CMCL-based VQA Network
-
-You can traing CMCL-based VQA Network with following command or train_model.sh in script folder.
+You can train VQA Network using KD-MCL with following command or running `train_model.sh` in script folder.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m src.experiment.train \
-	--config_path src/experiment/options/san/default.yml \
-	--model_type san \
-	--num_workers 8 \
+	--config_path src/experiment/options/clevr/ensemble/KD-MCL-saaa/default.yml \
+	--model_type ensemble \
+	--dataset clevr \
+	--num_workers 4
 ```
+Then, training outputs are saved in `results/dataset/model_type/option_path`.
 
-### Visualization of Model's states.
+### Evaluating VQA Network
 
-Visualization of the model states gives valuable insite about how model works.
-You can visualize the model's states using the following commands:
+You can evaluate VQA Network with following command or running `eval_model.sh` in script folder.
 
 ```bash
-python -m src.experiment.clevr.visualize.end2end_neural_module_network \
---state_h5_file results/experiments/clevr/end2end_neural_module_network/default/states/final.h5
-```
-where *state_h5_file* is the location of state files with hdf5 format.
-This script will save visualizations in the following path.
-```
-{directory of (state_h5_file)}/visualization/{name of (state_h5_file)}/{batch_index}.svg
+CUDA_VISIBLE_DEVICES=0 python -m src.experiment.eval \
+	--exp KD-MCL-saaa/default \
+	--model_type ensemble \
+	--dataset clevr \
+	--start_epoch 0 \
+	--end_epoch 100 \
+	--epoch_stride 5 \
+	--num_workers 4 \
 ```

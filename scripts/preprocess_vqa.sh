@@ -8,14 +8,13 @@ fi
 
 # Construct vocabulary for training and validation dataset of VQA v1.9
 echo "=====> Constructing vocabulary on train/val split"
-stdbuf -oL python -m src.preprocess.construct_vocabulary \
+python -m src.preprocess.construct_vocabulary \
 	--vocab_option 'raw' \
 	--target_splits 'train' 'val' \
 	--save_vocab_dir 'data/VQA_v2.0/preprocess/vocabulary' \
 	--dataset 'vqa' \
 	--dataset_config_path './data/vqa_v2.0_path.yml' \
-	--threshold_num_answer 3000 \
-	2>&1 | tee logs/log_construct_vocabulary_VQA_v2.0.log
+	--threshold_num_answer 3000
 
 
 

@@ -534,7 +534,7 @@ class SAAA(VirtualVQANetwork):
         # options for KLD with base model
         self.use_knowledge_distillation = \
             utils.get_value_from_dict(
-                config["model"], "use_knowledge_distillation", False)
+                config["model"], "learning_knowledge_distillation_loss", False)
         base_model_ckpt_path = \
                 utils.get_value_from_dict(
                     config["model"], "base_model_ckpt_path", "None")

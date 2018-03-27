@@ -1,0 +1,11 @@
+clevr_root: "./data/CLEVR_v1.0"
+split_options:
+ - train
+ - val
+ - test
+question_json: "questions/CLEVR_%s_questions.json"
+image_path: "images/%s/CLEVR_%s_%60d.png"
+scene_split_options:
+ - train
+ - val
+scene_json: "scenes/CLEVR_%s_scenes.json"

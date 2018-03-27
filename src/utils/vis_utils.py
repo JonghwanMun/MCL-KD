@@ -7,7 +7,6 @@ import logging
 import itertools
 
 import h5py
-import visdom
 import numpy as np
 from PIL import Image
 from textwrap import wrap

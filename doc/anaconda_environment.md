@@ -1,18 +1,18 @@
 ## Environment
-In this project, we used currently Ubuntu 14.04(Linux), python3.5, CUDA 8.0 (with Cudnn 7.0.5).
+In this project, we used currently Ubuntu 14.04(Linux), Anaconda3 (with python3.5, below anaconda 4.2.0), CUDA 8.0 (with Cudnn 7.0.5).
 
-### Setting Anaconda environment
-After installing [Anaconda](https://www.continuum.io/downloads), you should create a [conda environment](http://conda.pydata.org/docs/using/envs.html)
+### 1. Setting Anaconda environment
+After installing [Anaconda](https://www.continuum.io/downloads), it is nice to create a [conda environment](http://conda.pydata.org/docs/using/envs.html)
 so you do not destroy your main installation in case you make a mistake somewhere:
 ```bash
-conda create --name vqa-cmcl python=3.5
+conda create --name vqa-kdmcl python=3.5
 ```
 Now you can switch to the new environment in your terminal by running the following (on Linux terminal):
 ```bash
-source activate vqa-cmcl
+source activate vqa-kdmcl
 ```
 
-### Required Packages
+### 2. Required Packages
 
 #### install python packages through conda
 This project requires several Python packages to be installed.<br />
@@ -24,4 +24,4 @@ conda install -c conda-forge coloredlogs
 ```
 
 #### install python packages through pip
-pip install visdom
+Curerntly not use pip-based packages
