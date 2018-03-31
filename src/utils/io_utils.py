@@ -3,7 +3,7 @@ import glob
 import json
 import yaml
 import uuid
-import logging
+import logging, logging.handlers
 import subprocess
 
 import h5py
@@ -29,7 +29,7 @@ def get_logger(name, log_file_path=None, fmt="%(asctime)s:%(levelname)s:%(name)s
         file_handler.setLevel(write_lev)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    # # Add stream handler
+    # Add stream handler
     coloredlogs.install(level=print_lev, logger=logger)
     return logger
 

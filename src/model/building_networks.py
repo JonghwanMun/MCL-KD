@@ -531,10 +531,18 @@ class SAAA(VirtualVQANetwork):
         loss_reduce = utils.get_value_from_dict(
             config["model"], "loss_reduce", True)
 
+        # options for deep image embedding
+        self.use_deep_img_emb = utils.get_value_from_dict(
+            config["model"], "use_deep_img_embedding", False)
+        # options for applying l2-norm
+        self.apply_l2_norm = \
+            utils.get_value_from_dict(
+                config["model"], "apply_l2_norm", True)
+
         # options for KLD with base model
         self.use_knowledge_distillation = \
-            utils.get_value_from_dict(
-                config["model"], "learning_knowledge_distillation_loss", False)
+            utils.get_value_from_dict(config["model"],
+                    "learning_knowledge_distillation_loss", False)
         base_model_ckpt_path = \
                 utils.get_value_from_dict(
                     config["model"], "base_model_ckpt_path", "None")
@@ -543,6 +551,8 @@ class SAAA(VirtualVQANetwork):
                 "checkpoint path for base model should be given"
 
         # build layers
+        if self.use_deep_img_emb:
+            self.img_emb_net = building_blocks.ResBlock2D(config["model"], "img_emb")
         self.qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
         self.saaa = building_blocks.RevisedStackedAttention(config["model"])
         self.classifier = building_blocks.MLP(config["model"], "answer")
@@ -574,8 +584,12 @@ class SAAA(VirtualVQANetwork):
         """
         # forward network
         # applying l2-norm for img features
-        img_feats = \
-            data[0] / (data[0].norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
+        img_feats = data[0]
+        if self.apply_l2_norm:
+            img_feats = img_feats \
+                / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
+        if self.use_deep_img_emb:
+            img_feats = self.img_emb_net(img_feats)
         qst_feats = self.qst_emb_net(data[1], data[2])
         saaa_outputs = self.saaa(qst_feats, img_feats) # [ctx, att list]
         # concatenate attended feature and question feat

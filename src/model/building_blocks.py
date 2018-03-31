@@ -85,6 +85,44 @@ def get_mlp(in_dim, out_dim, hidden_dims, bias=True, dropout=0.0, nonlinear="ReL
     layers.append(nn.Linear(D, out_dim))
     return nn.Sequential(*layers)
 
+def get_mlp2d(in_dim, out_dim, hidden_dims, bias=True, dropout=0.0,
+              nonlinear="ReLU", use_batchnorm=False):
+    layers = []
+    if dropout > 0:
+        layers.append(nn.Dropout(p=dropout))
+    if use_batchnorm:
+        layers.append(nn.BatchNorm1d(in_dim))
+
+    D = in_dim
+    for dim in hidden_dims:
+        layers.append(nn.Linear(in_features=D, out_features=dim, bias=bias))
+        layers.append(nn.Conv2d(in_channels=D, out_channels=dim, kernel_size=k_size, \
+                            stride=stride, padding=padding, bias=bias))
+        if use_batchnorm:
+            layers.append(nn.BatchNorm1d(dim))
+        if dropout > 0:
+            layers.append(nn.Dropout(p=dropout))
+        if nonlinear != "None":
+            layers.append(getattr(nn, nonlinear)())
+        D = dim
+    layers.append(nn.Conv2d(D, out_dim, k_size, stride, padding, bias=bias))
+    return nn.Sequential(*layers)
+
+def get_res_block_2d(in_dim, out_dim, hidden_dim):
+    layers = []
+    # 1st conv
+    layers.append(nn.Conv2d(in_dim, hidden_dim, 1, 1, bias=False))
+    layers.append(nn.BatchNorm2d(hidden_dim))
+    layers.append(nn.ReLU(inplace=True))
+    # 2nd conv
+    layers.append(nn.Conv2d(hidden_dim, hidden_dim, 3, 1, 1, bias=False))
+    layers.append(nn.BatchNorm2d(hidden_dim))
+    layers.append(nn.ReLU(inplace=True))
+    # 3rd conv
+    layers.append(nn.Conv2d(hidden_dim, out_dim, 1, 1, bias=False))
+    layers.append(nn.BatchNorm2d(out_dim))
+
+    return nn.Sequential(*layers)
 
 """
 Layers for networks
@@ -121,6 +159,40 @@ class MLP(nn.Module):
             answer_label : [B, out_dim]
         """
         return self.mlp_1d(inp)
+
+class ResBlock2D(nn.Module):
+    def __init__(self, config, name=""):
+        super(ResBlock2D, self).__init__() # Must call super __init__()
+        if name != "":
+            name = name + "_"
+
+        # get configuration
+        inp_dim = utils.get_value_from_dict(
+            config, name+"res_block_2d_inp_dim", 1024)
+        out_dim = utils.get_value_from_dict(
+            config, name+"res_block_2d_out_dim", 1024)
+        hidden_dim = utils.get_value_from_dict(
+            config, name+"res_block_2d_hidden_dim", 512)
+        self.num_blocks = utils.get_value_from_dict(
+            config, name+"num_blocks", 1)
+
+        # set layers
+        self.blocks = nn.ModuleList()
+        for i in range(self.num_blocks):
+            self.blocks.append(get_res_block_2d(inp_dim, out_dim, hidden_dim))
+
+    def forward(self, inp):
+        """
+        Args:
+            inp: [B, inp_dim, H, w]
+        Returns:
+            answer_label : [B, out_dim, H, w]
+        """
+        for i in range(self.num_blocks):
+            out = self.blocks[i](inp)
+            out += inp
+            out = F.relu(out)
+        return out
 
 class Embedding2D(nn.Module):
     def __init__(self, config, name=""):
