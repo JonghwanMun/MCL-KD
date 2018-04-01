@@ -188,10 +188,12 @@ class ResBlock2D(nn.Module):
         Returns:
             answer_label : [B, out_dim, H, w]
         """
+        residual = inp
         for i in range(self.num_blocks):
-            out = self.blocks[i](inp)
-            out += inp
+            out = self.blocks[i](residual)
+            out += residual
             out = F.relu(out)
+            residual = out
         return out
 
 class Embedding2D(nn.Module):
