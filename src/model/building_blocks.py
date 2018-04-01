@@ -175,11 +175,20 @@ class ResBlock2D(nn.Module):
             config, name+"res_block_2d_hidden_dim", 512)
         self.num_blocks = utils.get_value_from_dict(
             config, name+"num_blocks", 1)
+        self.use_downsample = utils.get_value_from_dict(
+            config, name+"use_downsample", False)
 
         # set layers
+        if self.use_downsample:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(inp_dim, out_dim, kernel_size=1, stride=1, bias=False),
+                nn.BatchNorm2d(out_dim),
+            )
         self.blocks = nn.ModuleList()
         for i in range(self.num_blocks):
             self.blocks.append(get_res_block_2d(inp_dim, out_dim, hidden_dim))
+            if (i == 0) and self.use_downsample:
+                inp_dim = out_dim
 
     def forward(self, inp):
         """
@@ -191,6 +200,8 @@ class ResBlock2D(nn.Module):
         residual = inp
         for i in range(self.num_blocks):
             out = self.blocks[i](residual)
+            if (i == 0) and self.use_downsample:
+                residual = self.downsample(residual)
             out += residual
             out = F.relu(out)
             residual = out
