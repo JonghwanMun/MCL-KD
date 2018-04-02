@@ -645,6 +645,9 @@ class SAAA(VirtualVQANetwork):
             "Configuration shuold be dictionary"
 
         m_config = config["model"]
+        # for image embedding layer
+        if "img_emb_res_block_2d_out_dim" in m_config.keys():
+            m_config["img_emb_dim"] = m_config["img_emb_res_block_2d_out_dim"]
         # for attention layer
         m_config["qst_emb_dim"] = m_config["rnn_hidden_dim"]
         # for classigication layer
