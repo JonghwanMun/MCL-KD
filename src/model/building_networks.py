@@ -571,6 +571,9 @@ class SAAA(VirtualVQANetwork):
         # set layer names (all and to be updated)
         self.model_list = ["qst_emb_net", "saaa", "classifier", "criterion"]
         self.models_to_update = ["qst_emb_net", "saaa", "classifier", "criterion"]
+        if self.use_deep_img_emb:
+            self.model_list.append("img_emb_net")
+            self.models_to_update.append("img_emb_net")
 
         self.config = config
 

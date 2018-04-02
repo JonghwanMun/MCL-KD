@@ -26,17 +26,17 @@ def _get_argument_params():
 	parser.add_argument("--config_path",
         default="src/experiment/options/ensemble.yml", help="Path to config file.")
 	parser.add_argument("--model_type",
-        default="saaa", help="Model type among [san | saaa | cmcl].")
+        default="saaa", help="Model type among [san | saaa | ensemble].")
 	parser.add_argument("--dataset",
         default="clevr", help="Dataset to train models [clevr | vqa].")
 	parser.add_argument("--output_filename",
         default="ensemble", help="filename for predictions.")
-	parser.add_argument("--selection_path",
+	parser.add_argument("--assignment_path",
                      default="None",
 #        default="data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/"
 #                     + "all_questions_use_zero_token_max_qst_len_45/"
-#                     + "m3_o1_selection_train.h5",
-                     help="Path to selection file.")
+#                     + "m3_o1_assignment_train.h5",
+                     help="Path to assignment file.")
 	parser.add_argument("--debug_mode" , action="store_true", default=False,
 		help="Train the model in debug mode.")
 
@@ -50,8 +50,8 @@ def _set_model(params):
     global M
     if params["model_type"] == "san":
         M = getattr(building_networks, "SAN")
-    elif params["model_type"] == "cmcl":
-        M = getattr(building_networks, "CMCL")
+    elif params["model_type"] == "ensemble":
+        M = getattr(building_networks, "Ensemble")
     elif params["model_type"] == "saaa":
         M = getattr(building_networks, "SAAA")
     else:
@@ -77,12 +77,12 @@ def ensemble(config):
             num_workers=config["num_workers"], \
             shuffle=False, collate_fn=dataset.collate_fn)
 
-    """ Load selections if exists """
-    with_selection = False
-    if config["selection_path"] != "None":
-        with_selection = True
-        selection_file = io_utils.load_hdf5(config["selection_path"], verbose=False)
-        selections = selection_file["selections"][:]
+    """ Load assignments if exists """
+    with_assignment = False
+    if config["assignment_path"] != "None":
+        with_assignment = True
+        assignment_file = io_utils.load_hdf5(config["assignment_path"], verbose=False)
+        assignments = assignment_file["assignments"][:]
         cnt_mapping = np.zeros((3,3))
 
     """ Build network """
@@ -132,7 +132,7 @@ def ensemble(config):
         else:
             gt = batch[0][-1]
 
-        if with_selection:
+        if with_assignment:
             correct_mask_list = []
 
         correct = 0
@@ -155,7 +155,7 @@ def ensemble(config):
             else:
                 oracle_correct = oracle_correct + correct
 
-            if with_selection:
+            if with_assignment:
                 correct_mask_list.append(correct.clone())
 
         # top1 accuracy for ensemble
@@ -175,11 +175,11 @@ def ensemble(config):
                 "answer": utils.label2string(itoa, max_idx[i])
             })
 
-        if with_selection:
+        if with_assignment:
             correct_mask_list = torch.stack(correct_mask_list, 1).numpy()
             for it in range(correct_mask_list.shape[0]):
-                cur_selection = selections[ii]
-                cnt_mapping[cur_selection] += correct_mask_list[it]
+                cur_assignment = assignments[ii]
+                cnt_mapping[cur_assignment] += correct_mask_list[it]
                 ii += 1
         # epoch done
 
@@ -192,7 +192,7 @@ def ensemble(config):
     save_dir = os.path.join("results", "ensemble_predictions")
     io_utils.check_and_create_dir(save_dir)
     io_utils.write_json(os.path.join(save_dir, config["out"]+".json"), predictions)
-    if with_selection:
+    if with_assignment:
         np.save(os.path.join(save_dir, "mapping_count"), cnt_mapping)
 
 def main(params):
@@ -200,7 +200,7 @@ def main(params):
     config = io_utils.load_yaml(params["config_path"])
     config["debug_mode"] = params["debug_mode"]
     config["out"] = params["output_filename"]
-    config["selection_path"] = params["selection_path"]
+    config["assignment_path"] = params["assignment_path"]
 
     # ensemble networks
     ensemble(config)
