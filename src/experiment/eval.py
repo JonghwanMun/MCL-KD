@@ -24,7 +24,7 @@ def _get_argument_params():
             help="Do evaluation or getting/saving some values")
 	parser.add_argument("--mode", default="eval", help="Do evaluation or getting/saving some values")
 	parser.add_argument("--exp", type=str, required=True, help="Experiment or configuration name")
-	parser.add_argument("--model_type", default="cmcl", help="Model type among [san | cmcl | saaa].")
+	parser.add_argument("--model_type", default="ensemble", help="Model type among [san | ensemble | saaa].")
 	parser.add_argument("--dataset", default="clevr", help="dataset to train models [clevr|vqa].")
 	parser.add_argument("--num_workers", type=int, default=4, help="The number of workers for data loader.")
 	parser.add_argument("--start_epoch", type=int, default=10, help="Start epoch to evaluate.")
@@ -44,8 +44,8 @@ def _set_model(params):
     global M
     if params["model_type"] == "san":
         M = getattr(building_networks, "SAN")
-    elif params["model_type"] == "cmcl":
-        M = getattr(building_networks, "CMCL")
+    elif params["model_type"] == "ensemble":
+        M = getattr(building_networks, "Ensemble")
     elif params["model_type"] == "saaa":
         M = getattr(building_networks, "SAAA")
     else:

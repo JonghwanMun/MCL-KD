@@ -34,6 +34,8 @@ class VirtualVQANetwork(VirtualNetwork):
         # print configuration
         self.logger["train"].info(json.dumps(config, indent=2))
 
+        self.num_models = 1 # defaultly assumming one model
+
     def _set_sample_data(self, data):
         if self.sample_data == None:
             self.sample_data = copy.deepcopy(data)
@@ -176,16 +178,22 @@ class VirtualVQANetwork(VirtualNetwork):
                 self.config, confusion_matrix_list, class_names, epoch, prefix)
 
     """ methods for metrics """
-    def compute_confusion_matrix(self, logit_list, gts):
+    def compute_confusion_matrix(self, logits, gts):
         """ Compute confusion matrix for each model
         Args:
-            logit_list: list of m * [batch_size, num_answers]
-            gts: ground-truth answers [batch_size]
+            logits: list of m * [B, num_answers] or single logit [B, num_answers]
+            gts: ground-truth answers [B]
         """
         self.basenet_pred = []
-        B = logit_list[0].size(0)
-        prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
-        for ii in range(len(prob_list)):
+        B = logits[0].size(0)
+        if type(logits) == type(list()):
+            assert self.num_models > 1, "If type of logits is list, the number of base network" \
+                + "should be bigger than 1"
+            prob_list = [F.softmax(logit, dim=1) for logit in logits]
+        else:
+            assert self.num_models == 1, "The number of base network should be 1"
+            prob_list = [F.softmax(logits, dim=1)]
+        for ii in range(self.num_models):
             val, idx = prob_list[ii].max(dim=1)
             self.base_pred_all_list[ii].append(idx.data.clone().cpu().numpy())
             self.basenet_pred.append(utils.label2string(self.itoa, idx.data.cpu()[0]))
@@ -207,23 +215,21 @@ class VirtualVQANetwork(VirtualNetwork):
         else:
             if self.use_knowledge_distillation:
                 logits = logits[0]
-            # compute probabilities and average them
             B = logits.size(0)
             probs = F.softmax(logits, dim=1)
-            #probs = net_utils.get_data(probs)
 
         # count the number of correct predictions
         val, max_idx = net_utils.get_data(probs).max(dim=1)
         num_correct = torch.sum(torch.eq(max_idx, gts))
 
-        # save top1 related status
+        # save top1-related status
         self.status["top1"] = num_correct / B
         self.top1_predictions = max_idx
         self.top1_gt = utils.label2string(self.itoa, gts[0])
         self.counters["top1"].add(num_correct, B)
 
         # count the number of correct predictions and save them for each model
-        if self.config["misc"]["model_type"] == "ensemble" \
+        if self.classname == "ENSEMBLE" \
                 and self.config["model"]["verbose_all"]:
             assert type(logits) == type(list()),\
                 "To verbose all, you should perform ensemble"
@@ -349,6 +355,7 @@ class VirtualVQANetwork(VirtualNetwork):
 
         self.compute_top1_accuracy(logits, gts)
         self.attach_predictions()
+        self.compute_confusion_matrix(logits, gts)
 
     def print_status(self, epoch, iteration, prefix="",
                      mode="train", is_main_net=True):

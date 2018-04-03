@@ -140,7 +140,8 @@ class VirtualNetwork(nn.Module):
         Args:
             ckpt_path: checkpoint file path
         """
-        self.logger["train"].info("Checkpoint is saved in {}".format(ckpt_path))
+        self.logger["train"].info("Checkpoint [{}] is saved in {}".format(
+            " | ".join(model_state_dict.keys()), ckpt_path))
         model_state_dict = {}
         for m in self.model_list:
             model_state_dict[m] = self[m].state_dict()

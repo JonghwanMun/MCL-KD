@@ -27,7 +27,7 @@ class Ensemble(VirtualVQANetwork):
         self.use_gpu = utils.get_value_from_dict(
             config["model"], "use_gpu", True)
         self.num_models = utils.get_value_from_dict(
-            config["model"], "num_models", 3)
+            config["model"], "num_models", 5)
 
         # options if use knowledge distillation
         self.use_knowledge_distillation = \
@@ -484,6 +484,8 @@ class SAN(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix)
+        epoch = int(prefix.split("_")[-1])
+        self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
@@ -615,6 +617,8 @@ class SAAA(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix)
+        epoch = int(prefix.split("_")[-1])
+        self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
