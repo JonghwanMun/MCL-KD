@@ -1,0 +1,57 @@
+test_loader:
+    encoded_json_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_val.json"
+    encoded_hdf5_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_val.h5"
+    #encoded_json_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_train.json"
+    #encoded_hdf5_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_train.h5"
+    batch_size: 128
+    use_gpu: True
+    use_img: False
+    img_size: 224
+    img_dir: "data/CLEVR_v1.0/images"
+    feat_dir: "data/CLEVR_v1.0/feats/resnet_conv4_feats"
+use_gpu: True
+num_workers: 4
+# for SAN
+#checkpoint_paths:
+#    - "results/clevr/san/M0/checkpoints/checkpoint_epoch_085.pkl"
+#    - "results/clevr/san/M1/checkpoints/checkpoint_epoch_075.pkl"
+#    - "results/clevr/san/M2/checkpoints/checkpoint_epoch_100.pkl"
+#config_paths:
+#    - "results/clevr/san/M0/config.yml"
+#    - "results/clevr/san/M1/config.yml"
+#    - "results/clevr/san/M2/config.yml"
+# for SAAA
+checkpoint_paths:
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_0/checkpoints/checkpoint_epoch_018.pkl"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_1/checkpoints/checkpoint_epoch_014.pkl"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_2/checkpoints/checkpoint_epoch_020.pkl"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_3/checkpoints/checkpoint_epoch_021.pkl"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_4/checkpoints/checkpoint_epoch_018.pkl"
+config_paths:
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_0/config.yml"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_1/config.yml"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_2/config.yml"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_3/config.yml"
+    - "results/clevr/saaa/deep_img_embedding/diff_dim/128dim_b1_4/config.yml"
+
+#test_loader:
+#    encoded_json_path: "data/VQA_v2.0/preprocess/encoded_qa/vqa_3000_vocab_train-val_raw/all_questions_with_answer_vocab_use_zero_token_max_qst_len_23/qa_val.json"
+#    encoded_hdf5_path: "data/VQA_v2.0/preprocess/encoded_qa/vqa_3000_vocab_train-val_raw/all_questions_with_answer_vocab_use_zero_token_max_qst_len_23/qa_val.h5"
+#    batch_size: 128
+#    use_gpu: True
+#    use_img: False
+#    img_size: 224
+#    fetching_answer_option: "all_answers"
+#    img_dir: "data/VQA_v2.0/images"
+#    feat_type: "numpy"
+#    feat_dir: "data/VQA_v2.0/feats/resnet_conv4_feats"
+#use_gpu: True
+#num_workers: 4
+#checkpoint_paths:
+#    - "results/vqa/saaa/M0/checkpoints/checkpoint_epoch_035.pkl"
+#    - "results/vqa/saaa/M1/checkpoints/checkpoint_epoch_020.pkl"
+#    - "results/vqa/saaa/M2/checkpoints/checkpoint_epoch_030.pkl"
+#config_paths:
+#    - "results/vqa/saaa/M0/config.yml"
+#    - "results/vqa/saaa/M1/config.yml"
+#    - "results/vqa/saaa/M2/config.yml"

@@ -18,7 +18,7 @@ source activate vqa-kdmcl
 This project requires several Python packages to be installed.<br />
 You can install the packages by typing:
 ```bash
-conda install numpy scipy jupyter matplotlib pillow nltk tqdm pyyaml seaborn scikit-image scikit-learn h5py
+conda install nb_conda numpy scipy jupyter matplotlib pillow nltk tqdm pyyaml seaborn scikit-image scikit-learn h5py
 conda install -c conda-forge colorlog 
 conda install -c conda-forge coloredlogs
 ```

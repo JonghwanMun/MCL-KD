@@ -78,7 +78,6 @@ def main(params):
 
     """ Build data loader """
     loader_config = io_utils.load_yaml(params["loader_config_path"])
-    dset = {}
     dset = dataset.DataSet(loader_config)
     L = data.DataLoader(dset, batch_size=loader_config["batch_size"], \
                         num_workers=params["num_workers"], \

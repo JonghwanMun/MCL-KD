@@ -19,7 +19,7 @@ from src.dataset import clevr_dataset, vqa_dataset
 from src.experiment import common_functions as cmf
 from src.utils import accumulator, timer, utils, io_utils
 
-conn = Connection(client_token="AWBJYRXOWOVVEWHOLOWOPISWYOZUYIBFEKQQZVTSOLVAPQYC")
+conn = Connection(client_token="IZVHZHJUJEOYPAJJYMKESVBXWQZWAOMLBGUXMVSKNNNTECHF") # jonghwan
 conn.set_api_url("https://api.sigopt.com")
 
 """ Get parameters """
@@ -29,7 +29,7 @@ def _get_argument_params():
 	parser.add_argument("--config_path",
         default="src/experiment/options/default.yml", help="Path to config file.")
 	parser.add_argument("--model_type",
-        default="cmcl", help="Model type among [san | cmcl].")
+        default="ensemble", help="Model type among [san | ensemble].")
 	parser.add_argument("--dataset",
         default="clevr", help="Dataset to train models [clevr | vqa].")
 	parser.add_argument("--num_workers", type=int,
@@ -51,8 +51,8 @@ def _set_model(params):
     global M
     if params["model_type"] == "san":
         M = getattr(building_networks, "SAN")
-    elif params["model_type"] == "cmcl":
-        M = getattr(building_networks, "CMCL")
+    elif params["model_type"] == "ensemble":
+        M = getattr(building_networks, "Ensemble")
     elif params["model_type"] == "saaa":
         M = getattr(building_networks, "SAAA")
     else:
@@ -72,12 +72,12 @@ def _set_dataset(params):
 def tune_params(config, assignments, dsets, L):
 
     # overwrite the suggested parameters
-    config["model"]["cmcl_loss"]["tau"] = assignments["tau"]
-    config["model"]["cmcl_loss"]["beta"] = assignments["beta"]
-    config["training"]["init_lr"] = assignments["lr"]
+    #config["model"]["cmcl_loss"]["tau"] = assignments["tau"]
+    config["model"]["beta"] = assignments["beta"]
+    #config["optimize"]["init_lr"] = assignments["lr"]
 
     apply_cc_after = utils.get_value_from_dict(
-            config["training"], "apply_curriculum_learning_after", -1) # load checkpoint if exists
+            config["model"], "apply_curriculum_learning_after", -1) # load checkpoint if exists
 
     """ Tune params """
     # Build network
@@ -95,30 +95,30 @@ def tune_params(config, assignments, dsets, L):
     if config["model"]["use_gpu"]:
         net.gpu_mode()
 
-    """ Run training network """
+    """ Run optimize network """
     ii = 0
     iter_per_epoch = dsets["train"].get_iter_per_epoch()
     net.train_mode() # set network as train mode
-    for epoch in range(1):
+    for epoch in range(10):
         net.reset_status() # initialize status
         for batch in L["train"]:
 
             # Forward and update the network
             # Note that the 1st and 2nd item of outputs from forward() should be
             # loss and logits. The others would change depending on the network
-            lr = utils.adjust_lr(ii+1, iter_per_epoch, config["training"])
+            lr = utils.adjust_lr(ii+1, iter_per_epoch, config["optimize"])
             outputs = net.forward_update(batch, lr)
 
             # Compute status for current batch: loss, evaluation scores, etc
             net.compute_status(outputs[1], batch[0][-1])
 
             # print learning status
-            if (ii+1) % config["training"]["print_every"] == 0:
+            if (ii+1) % config["misc"]["print_every"] == 0:
                 net.print_status(epoch+1, ii+1)
 
             ii += 1
 
-            if config["training"]["debug"]:
+            if config["misc"]["debug"]:
                 if ii % 20 == 0:
                     break
             # epoch done
@@ -141,7 +141,7 @@ def main(params):
     # loading configuration and setting environment
     config = io_utils.load_yaml(params["config_path"])
     config = M.override_config_from_params(config, params)
-    cmf.create_save_dirs(config["training"])
+    cmf.create_save_dirs(config["misc"])
 
     # create loggers
     global logger
@@ -154,45 +154,25 @@ def main(params):
     L = {}
     L["train"] = data.DataLoader( \
             dsets["train"], batch_size=config["train_loader"]["batch_size"], \
-            num_workers=config["training"]["num_workers"], \
+            num_workers=config["misc"]["num_workers"], \
             shuffle=False, collate_fn=dataset.collate_fn)
     L["test"] = data.DataLoader( \
             dsets["test"], batch_size=config["test_loader"]["batch_size"], \
-            num_workers=config["training"]["num_workers"], \
+            num_workers=config["misc"]["num_workers"], \
             shuffle=False, collate_fn=dataset.collate_fn)
     config = M.override_config_from_loader(config, dsets["train"])
 
-    # save configuration for later network reproduction
-    save_config_path = os.path.join(config["training"]["result_dir"], "config.yml")
-    io_utils.write_yaml(save_config_path, config)
-
     """ create experiment for sigopt """
     experiment = conn.experiments().create(
-        name="KD-MCL Tuning",
+        name="KD-MCL Tuning (beta)",
         parameters=[
             dict(
                 name="beta",
                 bounds=dict(
-                    min=50,
-                    max=500
+                    min=0,
+                    max=200
                 ),
                 type="int"
-            ),
-            dict(
-                name="tau",
-                bounds=dict(
-                    min=1.0,
-                    max=5.0
-                ),
-                type="double"
-            ),
-            dict(
-                name="lr",
-                bounds=dict(
-                    min=0.0005,
-                    max=0.00005,
-                ),
-                type="double"
             )
         ],
         metadata=dict(

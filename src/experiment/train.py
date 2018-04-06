@@ -139,7 +139,7 @@ def train(config):
             # visualize results
             if (config["misc"]["vis_every"] > 0) \
                     and ((ii+1) % config["misc"]["vis_every"] == 0):
-                if config["model"]["type"] == "cmcl":
+                if config["model"]["type"] == "ensemble":
                     net.save_results(sample_data, "iteration_{}".format(ii+1), mode="train")
 
             ii += 1
