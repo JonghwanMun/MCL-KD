@@ -163,37 +163,44 @@ def main(params):
     config = M.override_config_from_loader(config, dsets["train"])
 
     """ create experiment for sigopt """
-    experiment = conn.experiments().create(
-        name="KD-MCL Tuning (beta)",
-        parameters=[
-            dict(
-                name="beta",
-                bounds=dict(
-                    min=0,
-                    max=200
-                ),
-                type="int"
-            )
-        ],
-        metadata=dict(
-            template="pytorch_cnn"
-        ),
-        observation_budget=299
-    )
-
-    """  tune parameters of network """
-    for _ in range(experiment.observation_budget):
-
-        suggestion = conn.experiments(experiment.id).suggestions().create()
-        assignments = suggestion.assignments
-        value = tune_params(config, assignments, dsets, L)
-
-        conn.experiments(experiment.id).observations().create(
-            suggestion=suggestion.id,
-            value=value
+    if params["debug"]:
+        experiment = conn.experiments().create(
+            name="KD-MCL Tuning (beta)",
+            parameters=[
+                dict(
+                    name="beta",
+                    bounds=dict(
+                        min=0,
+                        max=200
+                    ),
+                    type="int"
+                )
+            ],
+            metadata=dict(
+                template="pytorch_cnn"
+            ),
+            observation_budget=299
         )
 
-    assignments = conn.experiments(experiment.id).best_assignments().fetch().data[0].assignments
+        """  tune parameters of network """
+        for _ in range(experiment.observation_budget):
+
+            suggestion = conn.experiments(experiment.id).suggestions().create()
+            assignments = suggestion.assignments
+            value = tune_params(config, assignments, dsets, L)
+
+            conn.experiments(experiment.id).observations().create(
+                suggestion=suggestion.id,
+                value=value
+            )
+
+        assignments = conn.experiments(experiment.id).best_assignments().fetch().data[0].assignments
+    else:
+        assignments = {
+            "beta": 150
+        }
+        value = tune_params(config, assignments, dsets, L)
+
 
     print(assignments)
 
