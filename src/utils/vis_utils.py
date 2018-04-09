@@ -18,7 +18,7 @@ from scipy.misc import imresize
 from scipy.ndimage.filters import convolve, gaussian_filter
 from collections import OrderedDict
 
-from src.utils import utils, io_utils
+from src.utils import utils, io_utils, net_utils
 
 try:
     import seaborn as sns
@@ -76,7 +76,7 @@ def add_image_to_figure(fig, gc, row, col, row_height, col_width, images,
             fig.colorbar(cax)
 
 def add_vector_to_figure(fig, gc, row, col, row_height, col_width, vectors,
-                         ymin=0, ymax=0.1, colortype=None):
+                         class_name=None, ymin=0, ymax=0.1, colortype=None):
     try:
         if colortype == "sequence":
             color = sns.color_palette("Set1", n_colors=23, desat=.4)
@@ -91,6 +91,11 @@ def add_vector_to_figure(fig, gc, row, col, row_height, col_width, vectors,
         cax = sub.bar(np.arange(vector.shape[0]), vector, width=0.8, color=color)
         sub.axes.get_xaxis().set_visible(False)
         sub.tick_params(axis="y", which="major", labelsize=3)
+        if (class_name != None) and ((i+1) == len(vectors)):
+            tick_marks = np.arange(len(class_name))
+            sub.axes.get_xaxis().set_visible(True)
+            plt.setp(sub, xticks=tick_marks, xticklabels=class_name)
+            plt.setp(sub.get_xticklabels(), fontsize=2, rotation=45)
 
 def add_question_row_subplot(fig, gc, question, row, col_width=-1):
     if col_width != -1:
@@ -115,32 +120,27 @@ def add_attention_row_subplot(fig, gc, img, atts, num_stacks, row, col_width=2):
                            ["max ({:.6f})".format(ith_att_weight.max()), \
                             "min ({:.6f})".format(ith_att_weight.min())])
 
-def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row):
+def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row, class_name=None):
     # add ground truth answer
     add_text_to_figure(fig, gc, row, 0, 1, 1, ["GT: {}".format(gt)])
 
     if type(answer_logit) is list:
         add_text_to_figure(fig, gc, row, 2, 1, 2, \
-                ["Selection: {}".format(" | ".join(str(answer_logit[1][i]+1) \
+                ["Assignment: {}".format(" | ".join(str(answer_logit[1][i]+1) \
                 for i in range(answer_logit[1].size(0))))], rotation=0)
-        """
-        if isinstance(answer_logit[1], np.int32):
-            add_text_to_figure(fig, gc, row, 2, 1, 2, \
-                ["Selection: {}".format(str(answer_logit[1]+1))] ,rotation=0)
-        else:
-            add_text_to_figure(fig, gc, row, 2, 1, 2, \
-                ["Selection: {}".format(" | ".join(str(answer_logit[1][s]+1) \
-                for s in range(answer_logit[1].shape[0])))], rotation=0)
-        """
         for logit in answer_logit[0]:
             # compute probability of answers
             logit = logit.numpy() # tensor to numpy
             answer_prob = np.exp(logit) / (np.exp(logit).sum())  # + 1e-10)
             top5_predictions = ["{}\n({:.3f})".format(itoa[str(a)], answer_prob[a])
-                               for i, a in enumerate(answer_prob.argsort()[::-1][:5])]
+                    for i, a in enumerate(answer_prob.argsort()[::-1][:5])]
 
-            add_text_to_figure(fig, gc, row+1, 0, 1, 1, top5_predictions, y_loc=0.5, colortype="sequence")
-            add_vector_to_figure(fig, gc, row+1, 6, 1, 3, [answer_prob])
+            add_text_to_figure(fig, gc, row+1, 0, 1, 1, top5_predictions,
+                               y_loc=0.5, colortype="sequence")
+            add_vector_to_figure(fig, gc, row+1, 6, 1, 3,
+                                 [answer_prob], class_name=class_name)
+            add_vector_to_figure(fig, gc, row+1, 10, 1, 3,
+                                 [logit], class_name=class_name)
             row += 1
     else:
         # compute probability of answers
@@ -207,12 +207,14 @@ def save_san_visualization(config, data, result, itow, itoa, prefix, figsize=(5,
         #plt.savefig(save_dir + "_" + img_filename, bbox_inches="tight", dpi=500)
         plt.close()
 
-def save_mcl_visualization(config, data, result, itow, itoa, prefix, use_base_model=False, \
-                            use_precomputed_selection=False, figsize=(5,5)):
+def save_mcl_visualization(config, data, result, class_name, itow, itoa, \
+                           prefix, use_base_model=False, \
+                           use_precomputed_selection=False, figsize=(5,5)):
     """ Save visualization of CMCL-based model
     Args:
         config: configuration file including information of save directory
-        data: list of fourcomponents; [[inputs for network], img_info, selections, base_predictions]
+        data: list of fourcomponents;
+            [[inputs for network], img_info, selections, base_predictions]
             - inputs for network: list of items [imgs, qst_labels, qst_lengths,
                                     (precomputed_selections), answers]
         result: list of logit for m models; m * (B, C)
@@ -241,21 +243,23 @@ def save_mcl_visualization(config, data, result, itow, itoa, prefix, use_base_mo
         # create figure
         fig = plt.figure(figsize=figsize)
         if use_base_model:
-            gc = gridspec.GridSpec(len(result)+2+len(data[3]), 10)
+            gc = gridspec.GridSpec(len(result)+2+len(data[3]), 14)
         else:
-            gc = gridspec.GridSpec(len(result)+2, 10)
+            gc = gridspec.GridSpec(len(result)+2, 14)
 
         # plot question
         add_question_row_subplot(fig, gc, [question], 0)
 
         # plot answers and predictions
-        """data: list of fourcomponents; [[inputs for network], img_info, selections, base_predictions]"""
+        """ data: list of four components;
+            [[inputs for network], img_info, selections, base_predictions]
+        """
         logits = [logit[idx] for logit in result]
         if use_base_model:
             for i in range(len(data[3])):
                 logits.append(data[3][i][idx])
         selections = data[2][idx]
-        add_answer_row_subplot(fig, gc, [logits, selections], gt, itoa, 1)
+        add_answer_row_subplot(fig, gc, [logits, selections], gt, itoa, 1, class_name)
 
         # save figure and close it
         img_filename = utils.get_filename_from_path(img_path)
@@ -267,7 +271,7 @@ def save_mcl_visualization(config, data, result, itow, itoa, prefix, use_base_mo
 def save_confusion_matrix_visualization(config, cm_list, classes, epoch, prefix, fontsize=2,
                                         normalize=True, cmap=plt.cm.Blues, figsize=(5,5)):
     """
-    This function save the confusion matrix.
+    This function saves the confusion matrix.
     Normalization can be applied by setting `normalize=True`.
     """
     np.set_printoptions(precision=2)
@@ -320,6 +324,55 @@ def save_confusion_matrix_visualization(config, cm_list, classes, epoch, prefix,
             cbar.ax.tick_params(labelsize=2)
         """
     fig.tight_layout()
+
+    # save figure and close it
+    plt.savefig(os.path.join(save_dir, "epoch_{:03d}.png".format(epoch)), bbox_inches="tight", dpi=450)
+    plt.close()
+
+def save_assignment_visualization(config, assigns, classes, epoch, prefix, fontsize=2,
+                                        normalize=False, cmap=plt.cm.Blues, figsize=(5,5)):
+    """
+    This function saves the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    # create save directory
+    img_dir = config["train_loader"]["img_dir"]
+    save_dir = os.path.join(config["misc"]["result_dir"],
+                            "qualitative", "model_assign", prefix)
+    io_utils.check_and_create_dir(save_dir)
+
+    np.set_printoptions(precision=2)
+    assigns = assigns.numpy()
+    if normalize:
+        assigns = assigns.astype('float') / assigns.sum(axis=1)[:, np.newaxis]
+        print("Normalized assignments matrix")
+    else:
+        print('Assignments matrix, without normalization')
+
+    # get model naems
+    num_models = assigns.shape[0]
+    modelnames = []
+    for i in range(num_models):
+        modelnames.append("M{}".format(i))
+
+    # draw assignments
+    plt.imshow(assigns, interpolation="nearest", cmap=plt.cm.Blues)
+    plt.colorbar()
+    plt.xticks(np.arange(len(classes)), classes, rotation=45)
+    plt.yticks(np.arange(num_models), modelnames)
+
+    fmt = '.2f' #if normalize else 'd'
+    max_val = assigns.max()
+    for i, j in itertools.product(range(assigns.shape[0]), range(assigns.shape[1])):
+        if assigns[i, j] > (max_val * 0.4):
+            plt.text(j, i, format(assigns[i, j], fmt),
+                     horizontalalignment="center",rotation=45,
+                     color="white" if assigns[i, j] > (max_val * 0.8) \
+                     else "black")
+
+    plt.tight_layout()
+    plt.ylabel('Model')
+    plt.xlabel('Label')
 
     # save figure and close it
     plt.savefig(os.path.join(save_dir, "epoch_{:03d}.png".format(epoch)), bbox_inches="tight", dpi=450)

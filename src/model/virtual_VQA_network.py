@@ -18,9 +18,10 @@ from src.model.virtual_network import VirtualNetwork
 from src.utils import accumulator, utils, io_utils, vis_utils, net_utils
 
 class VirtualVQANetwork(VirtualNetwork):
-    def __init__(self, config):
+    def __init__(self, config, verbose=True):
         # update options compatible for a specific VQA model
         config = self.model_specific_config_update(config)
+        self.num_models = 1 # defaultly assumming one model
 
         # save configuration for later network reproduction
         save_config_path = os.path.join(
@@ -32,15 +33,14 @@ class VirtualVQANetwork(VirtualNetwork):
         super(VirtualVQANetwork, self).__init__()
 
         # print configuration
-        self.logger["train"].info(json.dumps(config, indent=2))
-
-        self.num_models = 1 # defaultly assumming one model
+        if verbose:
+            self.logger["train"].info(json.dumps(config, indent=2))
 
     def _set_sample_data(self, data):
         if self.sample_data == None:
             self.sample_data = copy.deepcopy(data)
 
-    def reset_status(self):
+    def reset_status(self, init_reset=False):
         """ Reset (initialize) metric scores or losses (status).
         """
         if self.status == None:
@@ -112,11 +112,26 @@ class VirtualVQANetwork(VirtualNetwork):
         self.logger["train"].info("Checkpoint is saved in {}".format(
                 ckpt_path.format(cid)))
 
-    def attach_assignments(self):
+    def attach_assignments(self, gts):
+        """ Attach assignments to save later and sort assignments
+            along class labels for an epoch
+        """
         if self.config["model"]["version"] != "IE":
             self.qst_ids_list.append(self.cur_qids)
             self.assignments_list.append( \
                     self.criterion.assignments.clone().numpy())
+
+            # assignments [B, k]
+            assigns = self.criterion.assignments
+            if assigns.dim() > 1:
+                num_k = assigns.size(1)
+            else:
+                num_k = 1
+                assigns = assigns.view(-1,1)
+            onehot = net_utils.idx2onehot(gts, len(self.itoa)) # [B, num_labels]
+            for topk in range(num_k):
+                for bi in range(gts.size(0)):
+                    self.assign_per_model[assigns[bi,topk]] += onehot[bi]
 
     def attach_predictions(self):
         for i in range(len(self.cur_qids)):

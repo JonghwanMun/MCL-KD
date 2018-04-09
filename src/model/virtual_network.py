@@ -26,7 +26,7 @@ class VirtualNetwork(nn.Module):
 
         self._create_counters()
         self._get_loggers()
-        self.reset_status()
+        self.reset_status(init_reset=True)
 
     """ methods for forward/backward """
     def forward(self, data):
@@ -156,7 +156,7 @@ class VirtualNetwork(nn.Module):
         self.logger["eval"] = io_utils.get_logger("Evaluate")
 
     """ method for status (metrics) """
-    def reset_status(self):
+    def reset_status(self, init_reset=False):
         """ Reset (initialize) metric scores or losses (status).
         """
         if self.status == None:

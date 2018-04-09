@@ -25,6 +25,14 @@ def where(cond, x1, x2):
     """
     return (cond * x1) + ((1-cond) * x2)
 
+def idx2onehot(idx, num_labels):
+    """ Convert indices to onethot vector
+    """
+    B = idx.size(0)
+    one_hot = torch.zeros(B, num_labels)
+    one_hot.scatter_(1, idx.view(-1,1), 1)
+    return one_hot
+
 def compute_kl_div(inputs, targets, tau=-1, \
                     apply_softmax_on_target=True, reduce=False):
     """
@@ -54,3 +62,28 @@ def compute_kl_div(inputs, targets, tau=-1, \
         kld_loss = kld_loss.mean()
 
     return kld_loss
+
+def compute_logit_margin(logit_list, gt_idx, margin_threshold, reduce=False):
+
+    B = gt_idx.size(0)
+    if type(logit_list) == type(list()):
+        margins = []
+        num_models = len(logit_list)
+        for mi in range(num_models):
+            gt_logit = logit_list[mi].gather(1, gt_idx.view(B,1))
+            diff = (gt_logit.view(B,1)-logit_list[mi]).abs()
+            margin = torch.clamp(diff, min=margin_threshold)
+            margins.append(margin.mean(dim=1))
+
+        if reduce:
+            for mi in range(num_models):
+                margins[mi] = margins[mi].mean()
+    else:
+        gt_logit = logit_list[mi].gather(1, gt_idx.view(B,1))
+        margins = torch.clamp(
+            gt_logit.view(B,1)-logit_list[mi], min=self.margin_threshold).mean(dim=1)
+
+        if reduce:
+            margins = margins.mean()
+
+    return margins

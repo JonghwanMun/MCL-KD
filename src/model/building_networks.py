@@ -155,7 +155,8 @@ class Ensemble(VirtualVQANetwork):
             origin_qst_ids = self.origin_test_qst_ids
 
         assignments, qst_ids = \
-            cmf.reorder_assignments_using_qst_ids(origin_qst_ids, qst_ids, assignments, is_subset=True)
+                cmf.reorder_assignments_using_qst_ids(
+                    origin_qst_ids, qst_ids, assignments, is_subset=True)
 
         # setting directory for saving assignments
         save_dir = os.path.join(self.config["misc"]["result_dir"], "assignments", mode)
@@ -174,8 +175,13 @@ class Ensemble(VirtualVQANetwork):
         io_utils.write_json(save_json_path, out)
         print ("Saving is done: {}".format(save_json_path))
 
+    def visualize_assignments(self, epoch, prefix="train"):
+        class_names = [self.itoa[str(key)] for key in range(len(self.itoa.keys()))]
+        vis_utils.save_assignment_visualization(
+                self.config, self.assign_per_model, class_names, epoch, prefix)
+
     def save_results(self, data, prefix, mode="train"):
-        """ Visualize results (attention weights) and save them
+        """ Save visualization of results (attention weights)
         Args:
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_path]
         """
@@ -237,15 +243,18 @@ class Ensemble(VirtualVQANetwork):
                 if self.use_knowledge_distillation:
                     vis_data.append([net_utils.get_data(bout) for bout in self.base_outs])
 
+                class_names = [self.itoa[str(key)] for key in range(len(self.itoa.keys()))]
                 vis_utils.save_mcl_visualization(
-                    self.config, vis_data, logits, self.itow, self.itoa, prefix, \
+                    self.config, vis_data, logits, class_names, \
+                    self.itow, self.itoa, prefix, \
                     self.use_knowledge_distillation, self.use_initial_assignment \
                 )
 
                 self.save_assignments(prefix, mode)
+                self.visualize_assignments(epoch, prefix=mode)
 
     """ Status related methods """
-    def reset_status(self):
+    def reset_status(self, init_reset=False):
         if self.status == None:
             # initialize metric scores/losses
             self.status = OrderedDict()
@@ -271,6 +280,9 @@ class Ensemble(VirtualVQANetwork):
         self.qst_ids_list = []
         if self.config["model"]["version"] != "IE":
             self.assignments_list = []
+
+        if not init_reset:
+            self.assign_per_model = torch.zeros(self.num_models, len(self.itoa))
 
     def compute_status(self, net_output, gts):
         """ Compute status (scores, etc)
@@ -298,7 +310,7 @@ class Ensemble(VirtualVQANetwork):
             self.counters["sel-loss"].add(self.status["sel-loss"], 1)
 
         self.attach_predictions()
-        self.attach_assignments()
+        self.attach_assignments(gts)
 
     def print_status(self, epoch, iteration, prefix="", mode="train", is_main_net=True):
         """ Print status (scores, etc)
@@ -524,8 +536,8 @@ class SAN(VirtualVQANetwork):
 
 
 class SAAA(VirtualVQANetwork):
-    def __init__(self, config):
-        super(SAAA, self).__init__(config) # Must call super __init__()
+    def __init__(self, config, verbose=True):
+        super(SAAA, self).__init__(config, verbose) # Must call super __init__()
 
         self.classname = "SAAA"
         self.use_gpu = utils.get_value_from_dict(

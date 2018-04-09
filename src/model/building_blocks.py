@@ -617,9 +617,9 @@ class EnsembleLoss(nn.Module):
 
         self.logger = io_utils.get_logger("Train")
 
+        # common options
+        self.version = utils.get_value_from_dict(config, "version", "KD-MCL")
         self.use_gpu = utils.get_value_from_dict(config, "use_gpu", True)
-        self.use_assignment_model = utils.get_value_from_dict(
-            config, "use_assignment_model", False)
         self.beta = utils.get_value_from_dict(config, "beta", 0.75)
         self.k = utils.get_value_from_dict(config, "num_overlaps", 2)
         self.m = utils.get_value_from_dict(config, "num_models", 3)
@@ -627,13 +627,22 @@ class EnsembleLoss(nn.Module):
         self.num_labels = utils.get_value_from_dict(config, "num_labels", 28)
         self.use_initial_assignment = \
                 utils.get_value_from_dict(config, "use_initial_assignment", False)
-        self.use_KD_loss_with_ensemble = \
-                utils.get_value_from_dict(config, "use_KD_loss_with_ensemble", False)
-        self.assign_using_accuracy = \
-                utils.get_value_from_dict(config, "assign_using_accuracy", False)
-        self.version = utils.get_value_from_dict(config, "version", "KD-MCL")
+
+        # options for KD-MCL
+        self.use_KD_loss_with_ensemble = utils.get_value_from_dict(
+                config, "use_KD_loss_with_ensemble", False)
+        self.assign_using_accuracy = utils.get_value_from_dict(
+                config, "assign_using_accuracy", False)
         self.use_ensemble_loss = utils.get_value_from_dict(
-            config, "use_ensemble_loss", False)
+                config, "use_ensemble_loss", False)
+
+        # options for margin-MCL
+        self.margin_threshold = utils.get_value_from_dict(
+                config, "margin_threshold", 0.01)
+
+        # options for assignment model
+        self.use_assignment_model = utils.get_value_from_dict(
+            config, "use_assignment_model", False)
 
         if self.use_assignment_model:
             self.assignment_criterion = nn.CrossEntropyLoss()
@@ -686,6 +695,65 @@ class EnsembleLoss(nn.Module):
             min_idx = min_idx.t()
             total_loss = min_val.sum() / B
             # End of sMCL
+
+        elif self.version == "margin-MCL":
+            """
+            similar to CMCL, but just letting the margin over the probability at GT
+            within a threshold instead of producing uniform distribution
+            """
+
+            # compute oracle loss
+            gt_logit_list = []
+            margin_list = net_utils.compute_logit_margin(
+                    logit_list, labels, self.margin_threshold, reduce=False)
+
+            oracle_loss_list = []
+            for mi in range(self.m):
+                if (mi+1) != self.m:
+                    oracle_loss_list.append( ce_loss_list[mi] \
+                            + self.beta * (sum(margin_list[:mi]) \
+                            + sum(margin_list[mi+1:]))) # m * [B,]
+                else:
+                    oracle_loss_list.append(ce_loss_list[mi] \
+                            + self.beta * sum(margin_list[:mi])) # m*[B]
+
+            # compute assignments
+            oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
+            min_val, min_idx = oracle_loss_tensor.t().topk(
+                    self.k, dim=1, largest=False) # [B,k]
+            self.assignments = net_utils.get_data(min_idx) # [B,k]
+            min_idx = min_idx.t() # [k,B]
+
+            margin_tensor = torch.stack(margin_list, dim=0) # [m,B]
+            txt = "margin-MCL logit {} | CE {} | margin {} | ORACLE {} ".format(
+                "/".join("{:.3f}".format(
+                    logit_list[i].data[0].max()) for i in range(self.m)),
+                "/".join("{:.3f}".format(
+                    ce_loss_tensor[i,0].data[0]) for i in range(self.m)),
+                "/".join("{:6.3f}".format(
+                    margin_tensor[i,0].data[0]) for i in range(self.m)),
+                "/".join("{:6.3f}".format(
+                    oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
+            print(txt, end="")
+            if (self.iteration % (500)) == 0:
+                log_txt += txt
+
+            # compute loss with assignments
+            total_loss = 0
+            for mi in range(self.m):
+                for topk in range(self.k):
+                    selected_mask = min_idx[topk].eq(mi).float() # [B]
+                    if self.use_gpu and torch.cuda.is_available():
+                        selected_mask = selected_mask.cuda()
+
+                    cur_loss = net_utils.where(selected_mask,
+                            ce_loss_list[mi], self.beta*margin_list[mi])
+                    total_loss += cur_loss.sum()
+            #total_loss = total_loss / self.m / B / self.k
+            total_loss = total_loss / B
+
+
+            # End of margin-MCL
 
         elif self.version == "KD-MCL":
             """ obtain assignments (sorting oracle loss) """
