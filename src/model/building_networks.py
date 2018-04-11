@@ -175,10 +175,10 @@ class Ensemble(VirtualVQANetwork):
         io_utils.write_json(save_json_path, out)
         print ("Saving is done: {}".format(save_json_path))
 
-    def visualize_assignments(self, epoch, prefix="train"):
+    def visualize_assignments(self, prefix, mode="train"):
         class_names = [self.itoa[str(key)] for key in range(len(self.itoa.keys()))]
         vis_utils.save_assignment_visualization(
-                self.config, self.assign_per_model, class_names, epoch, prefix)
+                self.config, self.assign_per_model, class_names, prefix, mode)
 
     def save_results(self, data, prefix, mode="train"):
         """ Save visualization of results (attention weights)
@@ -190,8 +190,12 @@ class Ensemble(VirtualVQANetwork):
         # save visualization of confusion matrix for each model
         epoch = int(prefix.split("_")[-1])
         self.visualize_confusion_matrix(epoch, prefix=mode)
+        if self.config["model"]["version"] != "IE":
+            self.save_assignments(prefix, mode)
+            self.visualize_assignments(prefix=prefix, mode=mode)
 
-        if mode == "train":
+        """ given sample data """
+        if data is not None:
             # maintain sample data
             self._set_sample_data(data)
 
@@ -250,8 +254,6 @@ class Ensemble(VirtualVQANetwork):
                     self.use_knowledge_distillation, self.use_initial_assignment \
                 )
 
-                self.save_assignments(prefix, mode)
-                self.visualize_assignments(epoch, prefix=mode)
 
     """ Status related methods """
     def reset_status(self, init_reset=False):
@@ -413,7 +415,7 @@ class Ensemble(VirtualVQANetwork):
 
             if self.config["model"]["use_assignment_model"]:
                 ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
-                "checkpoints", "assignment_epoch_{:03d}.pkl")
+                "checkpoints", "assign_model_epoch_{:03d}.pkl")
                 torch.save(self.assignment_model.state_dict(),
                            ckpt_path.format(cid))
                 self.logger["train"].info("Assignment model is saved in {}".format(

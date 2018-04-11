@@ -463,7 +463,7 @@ class DataSet(data.Dataset):
         if self.assignment_path != "":
             # obtain assignment label
             assignment_file = io_utils.load_hdf5(self.assignment_path, verbose=False)
-            assignments = torch.from_numpy(assignment_file["selections"][idx])
+            assignments = torch.from_numpy(assignment_file["assignments"][idx])
             out.append(assignments)
         out.append(answer)
         out.append(qst_id)
@@ -476,22 +476,35 @@ class DataSet(data.Dataset):
 
     def get_samples(self, num_samples):
         """ Retrun sample data (images, question_label question_legnth, (assignments), answers, filename)
-        Returns:
+        Returns: list of below items
             img (or feat): image (or feature)
             qst_label: question label
             qst_length: question length
+            (assignments: pre-computed assignments)
             answer: answer for questions
             img_filename: filename of images
         """
         samples = []
-        for si in range(num_samples):
+        cur_num_samples = 0
+        sample_answers = []
+        while True:
             # randomly select index of sample
             idx = np.random.randint(0, len(self)-1)
 
             # obtain question label, its length and answer
             img_filename = self.json_file["image_filenames"][idx]
             sample = self.__getitem__(idx)
-            samples.append([*sample[:-1], img_filename])
+
+            # we get samples with different answers
+            cur_answer_label = sample[-2][0]
+            if cur_answer_label in sample_answers:
+                continue
+            else:
+                sample_answers.append(cur_answer_label)
+                samples.append([*sample[:-1], img_filename])
+                cur_num_samples += 1
+            if cur_num_samples == num_samples:
+                break
 
         return collate_fn(samples)
 

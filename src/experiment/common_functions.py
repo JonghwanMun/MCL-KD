@@ -100,7 +100,7 @@ def eval(config, loader, net, epoch, logger_name="epoch", mode="Train", verbose_
 
     net.metric = net.counters["top1"].get_average() # would be used for tuning parameter
     net.print_counters_info(epoch+1, logger_name=logger_name, mode=mode)
-    #net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
+    net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
 
 """ get assignment values for data """
 def reorder_assignments_using_qst_ids(origin_qst_ids, qst_ids, assignments, is_subset=False):

@@ -329,8 +329,8 @@ def save_confusion_matrix_visualization(config, cm_list, classes, epoch, prefix,
     plt.savefig(os.path.join(save_dir, "epoch_{:03d}.png".format(epoch)), bbox_inches="tight", dpi=450)
     plt.close()
 
-def save_assignment_visualization(config, assigns, classes, epoch, prefix, fontsize=2,
-                                        normalize=False, cmap=plt.cm.Blues, figsize=(5,5)):
+def save_assignment_visualization(config, assigns, classes, prefix, mode,
+                                  fontsize=2, cmap=plt.cm.Blues, figsize=(5,5)):
     """
     This function saves the confusion matrix.
     Normalization can be applied by setting `normalize=True`.
@@ -338,16 +338,11 @@ def save_assignment_visualization(config, assigns, classes, epoch, prefix, fonts
     # create save directory
     img_dir = config["train_loader"]["img_dir"]
     save_dir = os.path.join(config["misc"]["result_dir"],
-                            "qualitative", "model_assign", prefix)
+                            "qualitative", "model_assign", mode)
     io_utils.check_and_create_dir(save_dir)
 
     np.set_printoptions(precision=2)
     assigns = assigns.numpy()
-    if normalize:
-        assigns = assigns.astype('float') / assigns.sum(axis=1)[:, np.newaxis]
-        print("Normalized assignments matrix")
-    else:
-        print('Assignments matrix, without normalization')
 
     # get model naems
     num_models = assigns.shape[0]
@@ -374,6 +369,39 @@ def save_assignment_visualization(config, assigns, classes, epoch, prefix, fonts
     plt.ylabel('Model')
     plt.xlabel('Label')
 
+    # create figure
+    fig = plt.figure(figsize=figsize)
+    gc = gridspec.GridSpec(1, 2)
+
+    # draw assignments
+    for ii in range(2):
+        if ii == 0:
+            norm_assigns = assigns.astype('float') / assigns.sum(axis=1)[:, np.newaxis]
+            title = "normalize along model"
+        else:
+            norm_assigns = assigns.astype('float') / assigns.sum(axis=0)[np.newaxis, :]
+            title = "normalize along label"
+
+        sub = fig.add_subplot(gc[0, ii])
+        ax = sub.imshow(norm_assigns, interpolation='nearest', cmap=plt.cm.Blues)
+        # show title, axis (labels)
+        sub.set_title(title, fontsize=3)
+        plt.setp(sub, xticks=np.arange(len(classes)), xticklabels=classes)
+        plt.setp(sub, yticks=np.arange(num_models), yticklabels=modelnames)
+        plt.setp(sub.get_xticklabels(), fontsize=fontsize, rotation=45)
+        plt.setp(sub.get_yticklabels(), fontsize=fontsize)
+
+        if len(classes) <= 100:
+            fmt = '.2f'
+            max_val = norm_assigns.max()
+            for i, j in itertools.product(range(norm_assigns.shape[0]), range(norm_assigns.shape[1])):
+                if norm_assigns[i, j] > (max_val * 0.4):
+                    sub.text(j, i, format(norm_assigns[i, j], fmt),
+                             horizontalalignment="center", fontsize=fontsize, rotation=45,
+                             color="black" if norm_assigns[i, j] > (max_val * 0.7) else "black")
+
+    fig.tight_layout()
+
     # save figure and close it
-    plt.savefig(os.path.join(save_dir, "epoch_{:03d}.png".format(epoch)), bbox_inches="tight", dpi=450)
+    plt.savefig(os.path.join(save_dir, prefix+".png"), bbox_inches="tight", dpi=450)
     plt.close()
