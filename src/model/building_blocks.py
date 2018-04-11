@@ -1105,7 +1105,7 @@ class MultipleCriterion(nn.Module):
     def forward(self, inp, labels):
         """
         Args:
-            inp: logits or probabilities [B, C]
+            inp: list of two items: logit list (m * [B, C]) and CrossEntropyLoss list (m * [B,])
             labels: list of [answers, all_answers, mask]
                 - answers: do not use this
                 - all_answers: all answers [B, A]
