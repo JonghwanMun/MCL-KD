@@ -475,13 +475,13 @@ class DataSet(data.Dataset):
         return len(self.json_file["image_filenames"])
 
     def get_samples(self, num_samples):
-        """ Retrun sample data (images, question_label question_legnth, (assignments), answers, filename)
+        """ Retrun sample data
         Returns: list of below items
             img (or feat): image (or feature)
             qst_label: question label
             qst_length: question length
             (assignments: pre-computed assignments)
-            answer: answer for questions
+            answer: answer label for questions
             img_filename: filename of images
         """
         samples = []

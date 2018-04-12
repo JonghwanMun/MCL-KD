@@ -63,7 +63,49 @@ def compute_kl_div(inputs, targets, tau=-1, \
 
     return kld_loss
 
-def compute_logit_margin(logit_list, gt_idx, margin_threshold, reduce=False):
+def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin,
+                         use_logit=True, reduce=False):
+    """ Compute margin loss with logit (or prob) for assigned model
+    Args:
+        logit_list: list of logits; m * [B, num_answrs]
+        gt_idx: answer label
+        assigned_idx: index of assigned model
+        margin: margin for distance between prob in gt (assigned)
+            and prob in max (not assigned), that is margin should
+            be bigger than this value
+        use_logit: if true, use logit to compute margin, if not use prob
+        reduce: applying average along labels
+    """
+    # check input correction
+    assert type(logit_list) == type(list()), "logits should be given as list type"
+
+    B = logit_list[0].size(0)
+    num_models = len(logit_list)
+    if not use_logit:
+        for logit in logit_list:
+            logit = F.softmax(logit, dim=1)
+
+    # compute logit of assigned model at ground-truth label
+    # P_m_{assigned_idx}(y^*|x)
+    gt_logit = logit_list[assigned_idx].gather(1, gt_idx.view(B,1)).squeeze() # [B,]
+
+    margin_loss = 0
+    for mi in range(num_models):
+        if mi == assigned_idx:
+            continue
+        else:
+            # compute maximum logit for other models: max(P_m_{others}(y|x))
+            max_logit, _ = logit_list[mi].max(dim=1) # [B,]
+            dist = gt_logit - max_logit
+            margin_loss += (margin - dist).clamp(min=0.0)
+
+    if reduce:
+        margin_loss = margin_loss.mean()
+
+    return margin_loss
+
+""" DEPRECATED """
+def ___compute_logit_margin(logit_list, gt_idx, margin_threshold, reduce=False):
 
     B = gt_idx.size(0)
     if type(logit_list) == type(list()):
