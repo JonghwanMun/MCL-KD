@@ -51,7 +51,11 @@ class VirtualVQANetwork(VirtualNetwork):
             for k in self.status.keys():
                 self.status[k] = 0
 
+        self.gt_list = []
         self.all_predictions = []
+        self.base_pred_all_list = []
+        for m in range(self.num_models):
+            self.base_pred_all_list.append([])
 
     def tensor2variable(self, tensors):
         """ Convert tensors to Variable
