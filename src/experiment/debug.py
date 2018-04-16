@@ -26,7 +26,7 @@ def _get_argument_params():
 	parser.add_argument("--checkpoint_path",
         default="None", help="Path to checkpoint.")
 	parser.add_argument("--model_type",
-        default="cmcl", help="Model type among [san | cmcl].")
+        default="ensemble", help="Model type among [san | saaa | ensemble].")
 	parser.add_argument("--dataset",
         default="clevr", help="Dataset to train models [clevr | vqa].")
 	parser.add_argument("--mode",
@@ -41,33 +41,12 @@ def _get_argument_params():
 	return params
 
 
-""" Set model """
-def _set_model(params):
-    global M
-    if params["model_type"] == "san":
-        M = getattr(building_networks, "SAN")
-    elif params["model_type"] == "cmcl":
-        M = getattr(building_networks, "CMCL")
-    elif params["model_type"] == "saaa":
-        M = getattr(building_networks, "SAAA")
-    else:
-        raise NotImplementedError("Not supported model type ({})".format(params["model_type"]))
-
-""" Set dataset """
-def _set_dataset(params):
-    global dataset
-    if params["dataset"] == "clevr":
-        dataset = eval("clevr_dataset")
-    elif params["dataset"] == "vqa":
-        dataset = eval("vqa_dataset")
-    else:
-        raise NotImplementedError("Not supported dataset ({})".format(params["dataset"]))
-
 if __name__ == "__main__":
     # load parameters
     params = _get_argument_params()
-    _set_model(params)
-    _set_dataset(params)
+    global M, dataset
+    M = cmf.get_model(params["model_type"])
+    dataset = cmf.get_dataset(params["dataset"])
 
     # loading configuration and setting environment
     config = io_utils.load_yaml(params["config_path"])
@@ -80,7 +59,7 @@ if __name__ == "__main__":
     else:
         dset = dataset.DataSet(config["test_loader"])
 
-    L = data.DataLoader(dset, batch_size=config["train_loader"]["batch_size"], \
+    L = data.DataLoader(dset, batch_size=32, \
                                  num_workers=config["misc"]["num_workers"], \
                                  shuffle=False, collate_fn=dataset.collate_fn)
     config = M.override_config_from_loader(config, dset)
@@ -120,7 +99,7 @@ if __name__ == "__main__":
 
     # get assignments
     cmf.save_assignments(config, L, net, dset.get_qst_ids(), \
-        prefix="CMCL-saaa-beta0^1", mode=params["mode"])
+        prefix="MCL_e5_from_IE_e10", mode=params["mode"])
         #prefix="KD-MCL-beta100", mode=params["mode"])
 
     print("=====> Do Interactive Mode")

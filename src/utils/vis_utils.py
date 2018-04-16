@@ -131,7 +131,7 @@ def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row, class_name=None
         for logit in answer_logit[0]:
             # compute probability of answers
             logit = logit.numpy() # tensor to numpy
-            answer_prob = np.exp(logit) / (np.exp(logit).sum())  # + 1e-10)
+            answer_prob = np.exp(logit) / (np.exp(logit).sum() + 1e-10)
             top5_predictions = ["{}\n({:.3f})".format(itoa[str(a)], answer_prob[a])
                     for i, a in enumerate(answer_prob.argsort()[::-1][:5])]
 
@@ -145,7 +145,7 @@ def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row, class_name=None
     else:
         # compute probability of answers
         answer_logit = answer_logit.numpy() # tensor to numpy
-        answer_prob = np.exp(answer_logit) / (np.exp(answer_logit).sum())  # + 1e-10)
+        answer_prob = np.exp(answer_logit) / (np.exp(answer_logit).sum() + 1e-10)
         top5_predictions = ["{}\n({:.3f})".format(itoa[str(a)], answer_prob[a])
                            for i, a in enumerate(answer_prob.argsort()[::-1][:5])]
 
@@ -350,25 +350,6 @@ def save_assignment_visualization(config, assigns, classes, prefix, mode,
     for i in range(num_models):
         modelnames.append("M{}".format(i))
 
-    # draw assignments
-    plt.imshow(assigns, interpolation="nearest", cmap=plt.cm.Blues)
-    plt.colorbar()
-    plt.xticks(np.arange(len(classes)), classes, rotation=45)
-    plt.yticks(np.arange(num_models), modelnames)
-
-    fmt = '.2f' #if normalize else 'd'
-    max_val = assigns.max()
-    for i, j in itertools.product(range(assigns.shape[0]), range(assigns.shape[1])):
-        if assigns[i, j] > (max_val * 0.4):
-            plt.text(j, i, format(assigns[i, j], fmt),
-                     horizontalalignment="center",rotation=45,
-                     color="white" if assigns[i, j] > (max_val * 0.8) \
-                     else "black")
-
-    plt.tight_layout()
-    plt.ylabel('Model')
-    plt.xlabel('Label')
-
     # create figure
     fig = plt.figure(figsize=figsize)
     gc = gridspec.GridSpec(1, 2)
@@ -377,28 +358,27 @@ def save_assignment_visualization(config, assigns, classes, prefix, mode,
     for ii in range(2):
         if ii == 0:
             norm_assigns = assigns.astype('float') / assigns.sum(axis=1)[:, np.newaxis]
-            title = "normalize along model"
+            title = "normalize along model (row)"
         else:
             norm_assigns = assigns.astype('float') / assigns.sum(axis=0)[np.newaxis, :]
-            title = "normalize along label"
+            title = "normalize along label (column)"
 
         sub = fig.add_subplot(gc[0, ii])
         ax = sub.imshow(norm_assigns, interpolation='nearest', cmap=plt.cm.Blues)
         # show title, axis (labels)
         sub.set_title(title, fontsize=3)
-        plt.setp(sub, xticks=np.arange(len(classes)), xticklabels=classes)
         plt.setp(sub, yticks=np.arange(num_models), yticklabels=modelnames)
-        plt.setp(sub.get_xticklabels(), fontsize=fontsize, rotation=45)
         plt.setp(sub.get_yticklabels(), fontsize=fontsize)
 
         if len(classes) <= 100:
+            plt.setp(sub, xticks=np.arange(len(classes)), xticklabels=classes)
+            plt.setp(sub.get_xticklabels(), fontsize=fontsize, rotation=45)
             fmt = '.2f'
             max_val = norm_assigns.max()
             for i, j in itertools.product(range(norm_assigns.shape[0]), range(norm_assigns.shape[1])):
-                if norm_assigns[i, j] > (max_val * 0.4):
-                    sub.text(j, i, format(norm_assigns[i, j], fmt),
+                sub.text(j, i, format(norm_assigns[i, j], fmt),
                              horizontalalignment="center", fontsize=fontsize, rotation=45,
-                             color="black" if norm_assigns[i, j] > (max_val * 0.7) else "black")
+                             color="white" if norm_assigns[i, j] >= (0.70) else "black")
 
     fig.tight_layout()
 

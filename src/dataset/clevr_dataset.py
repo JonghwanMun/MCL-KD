@@ -495,14 +495,21 @@ class DataSet(data.Dataset):
             img_filename = self.json_file["image_filenames"][idx]
             sample = self.__getitem__(idx)
 
-            # we get samples with different answers
-            cur_answer_label = sample[-2][0]
-            if cur_answer_label in sample_answers:
-                continue
-            else:
+            random_prob = np.random.rand(1)[0]
+            if random_prob < 0.001:
                 sample_answers.append(cur_answer_label)
                 samples.append([*sample[:-1], img_filename])
                 cur_num_samples += 1
+            else:
+                # we get samples with different answers
+                cur_answer_label = sample[-2][0]
+                if cur_answer_label in sample_answers:
+                    continue
+                else:
+                    sample_answers.append(cur_answer_label)
+                    samples.append([*sample[:-1], img_filename])
+                    cur_num_samples += 1
+
             if cur_num_samples == num_samples:
                 break
 

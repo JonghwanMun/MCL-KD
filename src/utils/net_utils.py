@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from src.utils import accumulator, utils, io_utils
+from src.utils import accumulator, utils, io_utils, net_utils
 
 def get_data(data):
     if type(data) == type(list()):
@@ -63,11 +63,10 @@ def compute_kl_div(inputs, targets, tau=-1, \
 
     return kld_loss
 
-def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin,
-                         use_logit=True, reduce=False):
+def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin, reduce=False):
     """ Compute margin loss with logit (or prob) for assigned model
     Args:
-        logit_list: list of logits; m * [B, num_answrs]
+        logit_list: list of logits (or prob); m * [B, num_answrs]
         gt_idx: answer label
         assigned_idx: index of assigned model
         margin: margin for distance between prob in gt (assigned)
@@ -79,25 +78,34 @@ def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin,
     # check input correction
     assert type(logit_list) == type(list()), "logits should be given as list type"
 
-    B = logit_list[0].size(0)
-    num_models = len(logit_list)
-    if not use_logit:
-        for logit in logit_list:
-            logit = F.softmax(logit, dim=1)
-
     # compute logit of assigned model at ground-truth label
     # P_m_{assigned_idx}(y^*|x)
+    B = logit_list[0].size(0)
     gt_logit = logit_list[assigned_idx].gather(1, gt_idx.view(B,1)).squeeze() # [B,]
 
     margin_loss = 0
+    num_models = len(logit_list)
     for mi in range(num_models):
         if mi == assigned_idx:
             continue
         else:
+            """
             # compute maximum logit for other models: max(P_m_{others}(y|x))
+            # accept that y at maximum logit can be ground-truth
+            max_logit, max_idx = logit_list[mi].topk(2, dim=1) # [B, 2]
+            max_in_gt = max_idx[:,0].eq(gt_idx).float()
+            dist = net_utils.where(max_in_gt,
+                    gt_logit - max_logit[:,1], gt_logit - max_logit[:,0])
+            """
+            # anyway put margin whether y at maximum logit is a ground-truth
+            # label
             max_logit, _ = logit_list[mi].max(dim=1) # [B,]
             dist = gt_logit - max_logit
-            margin_loss += (margin - dist).clamp(min=0.0)
+            #dist = gt_logit.log_() - max_logit.log_()
+
+            # add margin loss for model_mi
+            cur_loss = (margin - dist).clamp(min=0.0)#.pow(2)
+            margin_loss += cur_loss
 
     if reduce:
         margin_loss = margin_loss.mean()

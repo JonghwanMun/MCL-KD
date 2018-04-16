@@ -1,25 +1,38 @@
 import os
 import pdb
 import time
+import h5py
+import json
 import yaml
 import logging
 import numpy as np
 from tqdm import tqdm
 from datetime import datetime
 
+from src.dataset import clevr_dataset, vqa_dataset
 from src.model import building_blocks, building_networks
 from src.utils import accumulator, timer, utils, io_utils
 
 """ get base model """
 def get_model(base_model_type):
-    if  base_model_type == "san":
+    if base_model_type in ["san", "SAN"]:
         M = getattr(building_networks, "SAN")
-    elif base_model_type == "saaa":
+    elif base_model_type in ["saaa", "SAAA"]:
         M = getattr(building_networks, "SAAA")
+    elif base_model_type in ["ensemble", "ENSEMBLE"]:
+        M = getattr(building_networks, "Ensemble")
     else:
-        raise NotImplementedError("Not supported model type ({})".format(params["model_type"]))
+        raise NotImplementedError("Not supported model type ({})".format(base_model_type))
     return M
-    print(M)
+
+def get_dataset(dataset):
+    if dataset == "clevr":
+        D = eval("clevr_dataset")
+    elif dataset == "vqa":
+        D = eval("vqa_dataset")
+    else:
+        raise NotImplementedError("Not supported model type ({})".format(dataset))
+    return D
 
 def create_save_dirs(config):
     """ Create neccessary directories for training and evaluating models
@@ -56,7 +69,7 @@ def create_logger(config, train_mode=True):
     return logger
 
 """ validate the network """
-def eval(config, loader, net, epoch, logger_name="epoch", mode="Train", verbose_every=None):
+def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verbose_every=None):
 
     if verbose_every == None:
         verbose_every = config["evaluation"]["print_every"]
@@ -155,7 +168,7 @@ def get_assignment_values(loader, net, origin_qst_ids):
 
 def save_assignments(config, L, net, qst_ids, prefix="", mode="train"):
     assignment_list, qst_ids = \
-            cmf.get_assignment_values(L, net, qst_ids)
+            get_assignment_values(L, net, qst_ids)
     assignments = np.vstack(assignment_list)
     print("shape of assignments: ", assignments.shape)
 

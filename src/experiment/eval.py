@@ -30,36 +30,12 @@ def _get_argument_params():
 	parser.add_argument("--start_epoch", type=int, default=10, help="Start epoch to evaluate.")
 	parser.add_argument("--end_epoch", type=int, default=50, help="End epoch to evaluate.")
 	parser.add_argument("--epoch_stride", type=int, default=5, help="Stride for jumping epoch.")
-	parser.add_argument("--interactive" , action="store_true", default=False,
-		help="Run the script in an interactive mode")
 	parser.add_argument("--debug_mode" , action="store_true", default=False,
 		help="Run the script in debug mode")
 
 	params = vars(parser.parse_args())
 	print (json.dumps(params, indent=4))
 	return params
-
-""" Set model """
-def _set_model(params):
-    global M
-    if params["model_type"] == "san":
-        M = getattr(building_networks, "SAN")
-    elif params["model_type"] == "ensemble":
-        M = getattr(building_networks, "Ensemble")
-    elif params["model_type"] == "saaa":
-        M = getattr(building_networks, "SAAA")
-    else:
-        raise NotImplementedError("Not supported model type ({})".format(params["model_type"]))
-
-""" Set dataset """
-def _set_dataset(params):
-    global dataset
-    if params["dataset"] == "clevr":
-        dataset = eval("clevr_dataset")
-    elif params["dataset"] == "vqa":
-        dataset = eval("vqa_dataset")
-    else:
-        raise NotImplementedError("Not supported dataset ({})".format(params["dataset"]))
 
 def main(params):
 
@@ -108,7 +84,7 @@ def main(params):
             if (apply_cc_after > 0) and (epoch >= apply_cc_after):
                 net.apply_curriculum_learning()
 
-            cmf.eval(config, L, net, epoch-1, logger_name="eval", mode="Evaluation", verbose_every=100)
+            cmf.evaluate(config, L, net, epoch-1, logger_name="eval", mode="Evaluation", verbose_every=100)
             net.save_results(sample_data, "epoch_{:03d}".format(epoch))
     elif params["mode"] == "selection":
         epoch = params["start_epoch"]
@@ -134,7 +110,7 @@ def main(params):
 
 if __name__ == "__main__":
     params = _get_argument_params()
-    _set_model(params)
-    _set_dataset(params)
-    if not params["interactive"]:
-        main(params)
+    global M, dataset
+    M = cmf.get_model(params["model_type"])
+    dataset = cmf.get_dataset(params["dataset"])
+    main(params)

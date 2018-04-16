@@ -15,6 +15,7 @@ from src.model import building_networks
 from src.dataset import clevr_dataset, vqa_dataset
 from src.experiment import common_functions as cmf
 from src.utils import accumulator, timer, utils, io_utils
+#from tensorboard_utils import PytorchSummary
 
 """ Get parameters """
 def _get_argument_params():
@@ -28,39 +29,14 @@ def _get_argument_params():
         default="clevr", help="Dataset to train models [clevr | vqa].")
 	parser.add_argument("--num_workers", type=int,
         default=4, help="The number of workers for data loader.")
-	parser.add_argument("--multi_gpu" , action="store_true", default=False,
-		help="Training models with multiple gpus.")
-	parser.add_argument("--interactive" , action="store_true", default=False,
-		help="Run the script in an interactive mode.")
+	parser.add_argument("--tensorboard_dir" , type=str, default="tensorboard",
+		help="Directory for tensorboard")
 	parser.add_argument("--debug_mode" , action="store_true", default=False,
 		help="Train the model in debug mode.")
 
 	params = vars(parser.parse_args())
 	print(json.dumps(params, indent=4))
 	return params
-
-
-""" Set model """
-def _set_model(params):
-    global M
-    if params["model_type"] == "san":
-        M = getattr(building_networks, "SAN")
-    elif params["model_type"] == "saaa":
-        M = getattr(building_networks, "SAAA")
-    elif params["model_type"] == "ensemble":
-        M = getattr(building_networks, "Ensemble")
-    else:
-        raise NotImplementedError("Not supported model type ({})".format(params["model_type"]))
-
-""" Set dataset """
-def _set_dataset(params):
-    global dataset
-    if params["dataset"] == "clevr":
-        dataset = eval("clevr_dataset")
-    elif params["dataset"] == "vqa":
-        dataset = eval("vqa_dataset")
-    else:
-        raise NotImplementedError("Not supported dataset ({})".format(params["dataset"]))
 
 """ Training the network """
 def train(config):
@@ -113,7 +89,7 @@ def train(config):
 
             # maintain sample data to observe learning status
             if ii == 0:
-                sample_data = dsets["train"].get_samples(5)
+                sample_data = dsets["train"].get_samples(1)
                 """ TODO: get samples from both training/test set
                 test_sample_data = dsets["test"].get_samples(5))
                 """
@@ -161,7 +137,7 @@ def train(config):
 
         # validate network
         if (epoch+1) % config["evaluation"]["every_eval"] == 0:
-            cmf.eval(config, L["test"], net, epoch, logger_name="epoch", mode="Valid")
+            cmf.evaluate(config, L["test"], net, epoch, logger_name="epoch", mode="Valid")
 
         # curriculum learning
         if (apply_cc_after >= 0) and ((epoch+1) == apply_cc_after):
@@ -171,8 +147,13 @@ def train(config):
         tm.reset()
 
 
+def main():
+    # get parameters from cmd
+    params = _get_argument_params()
+    global M, dataset
+    M = cmf.get_model(params["model_type"])
+    dataset = cmf.get_dataset(params["dataset"])
 
-def main(params):
     # loading configuration and setting environment
     config = io_utils.load_yaml(params["config_path"])
     config = M.override_config_from_params(config, params)
@@ -185,10 +166,5 @@ def main(params):
     # train network
     train(config)
 
-
 if __name__ == "__main__":
-    params = _get_argument_params()
-    _set_model(params)
-    _set_dataset(params)
-    if not params["interactive"]:
-        main(params)
+    main()

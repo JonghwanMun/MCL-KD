@@ -166,7 +166,7 @@ class Ensemble(VirtualVQANetwork):
         save_hdf5_path = os.path.join(save_dir, prefix + "_assignment.h5")
         hdf5_file = io_utils.open_hdf5(save_hdf5_path, "w")
         hdf5_file.create_dataset("assignments", dtype="int32", data=assignments)
-        print("Selctions are saved in {}".format(save_hdf5_path))
+        print("Assignments are saved in {}".format(save_hdf5_path))
 
         # save assignments of qst_ids
         save_json_path = os.path.join(save_dir, prefix + "_qst_ids.json")
@@ -244,14 +244,16 @@ class Ensemble(VirtualVQANetwork):
                 vis_data = [*self.sample_data, self.criterion.assignments]
                 if type(vis_data[0][-1]) == type(list()):
                     vis_data[0][-1] = vis_data[0][-1][0]
+                """
                 if self.use_knowledge_distillation:
                     vis_data.append([net_utils.get_data(bout) for bout in self.base_outs])
+                """
 
                 class_names = [self.itoa[str(key)] for key in range(len(self.itoa.keys()))]
                 vis_utils.save_mcl_visualization(
                     self.config, vis_data, logits, class_names, \
-                    self.itow, self.itoa, prefix, \
-                    self.use_knowledge_distillation, self.use_initial_assignment \
+                    self.itow, self.itoa, prefix#, \
+                    #self.use_knowledge_distillation, self.use_initial_assignment \
                 )
 
 

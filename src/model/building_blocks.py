@@ -641,6 +641,8 @@ class EnsembleLoss(nn.Module):
                 config, "margin_threshold", 1.0)
         self.use_logit = utils.get_value_from_dict(
                 config, "margin_in_logit", True)
+        self.get_assign_as_sMCL= utils.get_value_from_dict(
+                config, "get_assign_as_sMCL", False)
 
         # options for assignment model
         self.use_assignment_model = utils.get_value_from_dict(
@@ -679,7 +681,7 @@ class EnsembleLoss(nn.Module):
             # naive independent ensemble learning
             txt = "IE "
             print(txt, end="\r")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 self.logger.info(txt)
 
             total_loss = sum(task_loss_list)
@@ -690,7 +692,7 @@ class EnsembleLoss(nn.Module):
             # stochastic MCL (sMCL) [Stefan Lee et. al., 2016] (https://arxiv.org/abs/1606.07839)
             txt = "sMCL "
             print(txt, end="")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 log_txt += txt
             min_val, min_idx = task_loss_tensor.t().topk(self.k, dim=1, largest=False)
             self.assignments = net_utils.get_data(min_idx) # [B,k]
@@ -705,12 +707,14 @@ class EnsembleLoss(nn.Module):
             """
 
             # compute margins
-            nonspecialist_loss_list = []
-            for mi in range(self.m):
-                nonspecialist_loss_list.append(
-                    net_utils.compute_margin_loss(
-                        logit_list, labels, mi, self.margin_threshold,
-                        self.use_logit, reduce=False))
+            if self.use_logit:
+                logits = logit_list
+            else:
+                logits = [F.softmax(logit, dim=1) for logit in logit_list]
+
+            nonspecialist_loss_list = [net_utils.compute_margin_loss(
+                logits, labels, mi, self.margin_threshold, reduce=False) \
+                for mi in range(self.m)]
 
             # compute oracle loss
             oracle_loss_list = []
@@ -720,24 +724,35 @@ class EnsembleLoss(nn.Module):
 
             # compute assignments
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
-            min_val, min_idx = oracle_loss_tensor.t().topk(
-                    self.k, dim=1, largest=False) # [B,k]
-            self.assignments = net_utils.get_data(min_idx) # [B,k]
-            min_idx = min_idx.t() # [k,B]
+            if self.get_assign_as_sMCL:
+                min_val, min_idx = task_loss_tensor.t().topk(self.k, dim=1, largest=False)
+                self.assignments = net_utils.get_data(min_idx) # [B,k]
+                min_idx = min_idx.t()
+            else:
+                min_val, min_idx = oracle_loss_tensor.t().topk(
+                        self.k, dim=1, largest=False) # [B,k]
+                self.assignments = net_utils.get_data(min_idx) # [B,k]
+                min_idx = min_idx.t() # [k,B]
 
             nonspecialist_loss_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
+            #print(nonspecialist_loss_tensor) # [M, b]
             txt = "margin-MCL logit {} | CE {} | margin {} | ORACLE {} ".format(
                 "/".join("{:.3f}".format(
                     logit_list[i].data[0].max()) for i in range(self.m)),
                 "/".join("{:.3f}".format(
                     task_loss_tensor[i,0].data[0]) for i in range(self.m)),
                 "/".join("{:6.3f}".format(
-                    nonspecialist_loss_tensor[i,0].data[0]) for i in range(self.m)),
+                    self.beta*nonspecialist_loss_tensor[i,0].data[0]) for i in range(self.m)),
                 "/".join("{:6.3f}".format(
                     oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
             print(txt, end="")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 log_txt += txt
+
+            zero_mask = Variable(
+                torch.from_numpy(np.zeros(B)).float(), requires_grad=False) # [B]
+            if self.use_gpu and torch.cuda.is_available():
+                zero_mask = zero_mask.cuda()
 
             # compute loss with assignments
             total_loss = 0
@@ -748,8 +763,10 @@ class EnsembleLoss(nn.Module):
                         selected_mask = selected_mask.cuda()
 
                     cur_loss = net_utils.where(selected_mask,
-                            task_loss_list[mi], self.beta*nonspecialist_loss_list[mi])
+                            task_loss_list[mi] - self.beta*nonspecialist_loss_list[mi],
+                            zero_mask)
                     total_loss += cur_loss.sum()
+            total_loss += (self.beta*sum(nonspecialist_loss_list[:])).sum()
             #total_loss = total_loss / self.m / B / self.k
             total_loss = total_loss / B / self.k
             # End of margin-MCL
@@ -792,7 +809,7 @@ class EnsembleLoss(nn.Module):
                 "/".join("{:6.3f}".format(
                     oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
             print(txt, end="")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 log_txt += txt
 
             # compute loss with assignments
@@ -819,7 +836,7 @@ class EnsembleLoss(nn.Module):
             if self.use_initial_assignment:
                 txt = "KD-MCL using pre-computed assignments "
                 print(txt, end="")
-                if (self.iteration % (500)) == 0:
+                if (self.iteration % (100)) == 0:
                     log_txt += txt
                 assignments = inp[-2].clone()
                 if assignments.dim() == 1:
@@ -872,7 +889,7 @@ class EnsembleLoss(nn.Module):
                     min_idx = Variable(self.assignments.clone().t())
                     txt = "{:03d} changed ".format(num_changed)
                     print(txt, end="")
-                    if (self.iteration % (500)) == 0:
+                    if (self.iteration % (100)) == 0:
                         log_txt += txt
 
             else:
@@ -903,7 +920,7 @@ class EnsembleLoss(nn.Module):
                     "/".join("{:6.3f}".format(
                         oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
                 print(txt, end="")
-                if (self.iteration % (500)) == 0:
+                if (self.iteration % (100)) == 0:
                     log_txt += txt
 
             # compute loss with assignments
@@ -924,7 +941,7 @@ class EnsembleLoss(nn.Module):
         elif self.version == "ALL":
             txt = "ALL loss "
             print(txt, end="")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 log_txt += txt
             # compute KL divergence with teacher distribution for each model
             KLD_list = self.compute_kld(logit_list, inp[-1])
@@ -996,7 +1013,7 @@ class EnsembleLoss(nn.Module):
             if self.version == "CMCL_v0":
                 txt = "CMCL v0 "
                 print(txt, end="")
-                if (self.iteration % (500)) == 0:
+                if (self.iteration % (100)) == 0:
                     log_txt += txt
                 total_loss = 0
                 for mi in range(self.m):
@@ -1014,7 +1031,7 @@ class EnsembleLoss(nn.Module):
             elif self.version == "CMCL_v1":
                 txt = "CMCL v1 "
                 print( txt, end="")
-                if (self.iteration % (500)) == 0:
+                if (self.iteration % (100)) == 0:
                     log_txt += txt
                 # sampling stochastically labels
                 np_random_labels = np.random.randint(0, self.num_labels, size=(self.m, B))
@@ -1068,7 +1085,7 @@ class EnsembleLoss(nn.Module):
                 "/".join("{:6.2f}".format(
                     oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
             print(txt, end="")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 log_txt += txt
 
         if self.use_ensemble_loss:
@@ -1078,7 +1095,7 @@ class EnsembleLoss(nn.Module):
             total_loss += ensemble_loss
             txt = "EL {:.3f} ".format(ensemble_loss.data[0])
             print(txt, end="")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 log_txt += txt
 
         if self.version != "IE":
@@ -1086,7 +1103,7 @@ class EnsembleLoss(nn.Module):
                 min_idx[0].eq(i).sum().data[0])
                 for i in range(self.m))
             print(txt, end="\r")
-            if (self.iteration % (500)) == 0:
+            if (self.iteration % (100)) == 0:
                 self.logger.info(log_txt + txt)
 
         # learn to predict assignment using question features
