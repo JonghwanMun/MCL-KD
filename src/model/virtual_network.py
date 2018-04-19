@@ -10,6 +10,7 @@ from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 
 from src.utils import accumulator, utils, io_utils, net_utils
+from src.utils.tensorboard_utils import PytorchSummary
 
 class VirtualNetwork(nn.Module):
     def __init__(self):
@@ -23,6 +24,7 @@ class VirtualNetwork(nn.Module):
 
         self.counters = None
         self.status = None
+        self.use_tf_summary = False
 
         self._create_counters()
         self._get_loggers()
@@ -84,7 +86,7 @@ class VirtualNetwork(nn.Module):
         # (e.g. logits), and remaining items would be intermediate values of network
         # that you want to show or check
         outputs = self.forward(data)
-        # TODO: considering multiple loss usage
+        # TODO: consider using dictionary for multiple losses
         loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
         self.update(loss, lr)
         return [loss, *outputs]
@@ -162,11 +164,9 @@ class VirtualNetwork(nn.Module):
         if self.status == None:
             self.status = OrderedDict()
             self.status["loss"] = 0
-            self.status["top1"] = 0
         else:
             for k in self.status.keys():
                 self.status[k] = 0
-
 
     def compute_status(self, logits, gts):
         """ Compute metric scores or losses (status).
@@ -196,11 +196,41 @@ class VirtualNetwork(nn.Module):
             # print learning information
             self.logger["train"].debug(txt)
 
+            if self.use_tf_summary and self.training_mode:
+                self.write_status_summary(iteration)
+
+
+    """ methods for tensorboard """
+    def create_tensorboard_summary(self, tensorboard_dir):
+        self.use_tf_summary = True
+        self.summary = PytorchSummary(tensorboard_dir)
+
+        self.write_params_summary(epoch=0)
+
+    def write_params_summary(self, epoch):
+        if self.models_to_update is None:
+            for name, param in self.named_parameters():
+                self.summary.add_histogram("model/{}".format(name),
+                    net_utils.get_data(param).numpy(), global_step=epoch)
+        else:
+            for m in self.models_to_update:
+                for name, param in self[m].named_parameters():
+                    self.summary.add_histogram("model/{}/{}".format(m, name),
+                        net_utils.get_data(param).numpy(), global_step=epoch)
+
+    def write_status_summary(self, iteration):
+        for k,v in self.status.items():
+            self.summary.add_scalar('status/' + k, v, global_step=iteration)
+
+    def write_counter_summary(self, epoch, mode):
+        for k,v in self.counters.items():
+            self.summary.add_scalar(mode + '/counters/' + v.get_name(),
+                               v.get_average(), global_step=epoch)
+
     """ methods for counters """
     def _create_counters(self):
         self.counters = OrderedDict()
         self.counters["loss"] = accumulator.Accumulator("loss")
-        self.counters["top1"] = accumulator.Accumulator("top1")
 
     def reset_counters(self):
         for k,v in self.counters.items():
@@ -217,6 +247,9 @@ class VirtualNetwork(nn.Module):
                 "{} does not belong to loggers".format(logger_name)
         self.logger[logger_name].info(txt)
 
+        if self.use_tf_summary:
+            self.write_counter_summary(epoch, mode)
+
         # reset counters
         self.reset_counters()
 
@@ -227,7 +260,6 @@ class VirtualNetwork(nn.Module):
 
     """ wrapper methods of nn.Modules """
     def get_parameters(self):
-        """ Wrapper for parameters() """
         if self.models_to_update is None:
             for name, param in self.named_parameters():
                 yield param
@@ -237,13 +269,11 @@ class VirtualNetwork(nn.Module):
                     yield param
 
     def cpu_mode(self):
-        """ Wrapper for cpu() """
         self.logger["train"].info(
             "Setting cpu() for [{}]".format(" | ".join(self.model_list)))
         self.cpu()
 
     def gpu_mode(self):
-        """ Wrapper for cuda() """
         if torch.cuda.is_available():
             self.logger["train"].info(
                 "Setting gpu() for [{}]".format(" | ".join(self.model_list)))
@@ -253,13 +283,11 @@ class VirtualNetwork(nn.Module):
         cudnn.benchmark = True
 
     def train_mode(self):
-        """ Wrapper for train() """
         self.train()
         self.training_mode = True
         self.logger["train"].info("Setting train() for [{}]".format(" | ".join(self.model_list)))
 
     def eval_mode(self):
-        """ Wrapper for eval() """
         self.eval()
         self.training_mode = False
         self.logger["train"].info("Setting eval() for [{}]".format(" | ".join(self.model_list)))
@@ -278,6 +306,9 @@ class VirtualNetwork(nn.Module):
         config["misc"]["exp_prefix"] = utils.get_filename_from_path(
             params["config_path"])
         config["misc"]["result_dir"] = os.path.join("results",
+            utils.get_filename_from_path(params["config_path"],
+            delimiter="options/"))
+        config["misc"]["tensorboard_dir"] = os.path.join("tensorboard",
             utils.get_filename_from_path(params["config_path"],
             delimiter="options/"))
         config["misc"]["model_type"] = params["model_type"]

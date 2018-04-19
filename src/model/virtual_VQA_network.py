@@ -46,7 +46,7 @@ class VirtualVQANetwork(VirtualNetwork):
         if self.status == None:
             self.status = OrderedDict()
             self.status["loss"] = 0
-            self.status["top1"] = 0
+            self.status["top1-avg"] = 0
         else:
             for k in self.status.keys():
                 self.status[k] = 0
@@ -159,7 +159,7 @@ class VirtualVQANetwork(VirtualNetwork):
     def _create_counters(self):
         self.counters = OrderedDict()
         self.counters["loss"] = accumulator.Accumulator("loss")
-        self.counters["top1"] = accumulator.Accumulator("top1")
+        self.counters["top1-avg"] = accumulator.Accumulator("top1-avg")
 
     def apply_curriculum_learning(self):
         return
@@ -185,7 +185,7 @@ class VirtualVQANetwork(VirtualNetwork):
             self.criterion = building_blocks.MultipleCriterion(
                 nn.CrossEntropyLoss(), loss_reduce)
 
-    """ methods for visualization """
+    """ methods for confusion matrix """
     def visualize_confusion_matrix(self, epoch, prefix="train"):
         confusion_matrix_list = []
         for ii in range(self.num_models):
@@ -197,7 +197,6 @@ class VirtualVQANetwork(VirtualNetwork):
         vis_utils.save_confusion_matrix_visualization(
                 self.config, confusion_matrix_list, class_names, epoch, prefix)
 
-    """ methods for metrics """
     def compute_confusion_matrix(self, logits, gts):
         """ Compute confusion matrix for each model
         Args:
@@ -209,44 +208,58 @@ class VirtualVQANetwork(VirtualNetwork):
         if type(logits) == type(list()):
             assert self.num_models > 1, "If type of logits is list, the number of base network" \
                 + "should be bigger than 1"
-            prob_list = [F.softmax(logit, dim=1) for logit in logits]
+            if self.prob_list == None:
+                self.prob_list = [F.softmax(logit, dim=1) for logit in logits]
         else:
             assert self.num_models == 1, "The number of base network should be 1"
-            prob_list = [F.softmax(logits, dim=1)]
+            if self.probs == None:
+                self.prob_list = [F.softmax(logits, dim=1)]
+            else:
+                self.prob_list = [self.probs]
         for ii in range(self.num_models):
-            val, idx = prob_list[ii].max(dim=1)
+            val, idx = self.prob_list[ii].max(dim=1)
             self.base_pred_all_list[ii].append(idx.data.clone().cpu().numpy())
             self.basenet_pred.append(utils.label2string(self.itoa, idx.data.cpu()[0]))
         self.gt_list.append(gts.clone().cpu().numpy())
 
+    """ methods for metrics """
     def compute_top1_accuracy(self, logits, gts):
         """ Compute Top-1 Accuracy
         Args:
-            logits list of m * [batch_size, num_answers]
+            logits: list of m * [batch_size, num_answers]
             gts: ground-truth answers [batch_size]
         """
         if self.classname == "ENSEMBLE":
             # compute probabilities and average them
             B = logits[0].size(0)
-            prob_list = [F.softmax(logit, dim=1) for logit in logits]
-            probs = torch.stack([prob for prob in prob_list], 0) # [m, B, num_answers]
-            probs = torch.mean(probs, dim=0) # [B, num_answers]
+            if self.prob_list == None:
+                self.prob_list = [F.softmax(logit, dim=1) for logit in logits]
+                self.probs = torch.stack([prob for prob in self.prob_list], 0) # [m, B, num_answers]
+                # compute accuracy using max-pooling
+                max_probs, _ = torch.max(self.probs, dim=0)
+                v, idx = net_utils.get_data(max_probs).max(dim=1)
+                num_correct = torch.sum(torch.eq(idx, gts))
+                self.status["top1-max"] = num_correct / B
+                self.counters["top1-max"].add(num_correct, B)
+                # applying avg-pooling
+                self.probs = torch.mean(self.probs, dim=0) # [B, num_answers]
 
         else:
             if self.use_knowledge_distillation:
                 logits = logits[0]
             B = logits.size(0)
-            probs = F.softmax(logits, dim=1)
+            if self.probs == None:
+                self.probs = F.softmax(logits, dim=1)
 
         # count the number of correct predictions
-        val, max_idx = net_utils.get_data(probs).max(dim=1)
+        val, max_idx = net_utils.get_data(self.probs).max(dim=1)
         num_correct = torch.sum(torch.eq(max_idx, gts))
 
         # save top1-related status
-        self.status["top1"] = num_correct / B
+        self.status["top1-avg"] = num_correct / B
         self.top1_predictions = max_idx
         self.top1_gt = utils.label2string(self.itoa, gts[0])
-        self.counters["top1"].add(num_correct, B)
+        self.counters["top1-avg"].add(num_correct, B)
 
         # count the number of correct predictions and save them for each model
         if self.classname == "ENSEMBLE" \
@@ -254,7 +267,7 @@ class VirtualVQANetwork(VirtualNetwork):
             assert type(logits) == type(list()),\
                 "To verbose all, you should perform ensemble"
             for m in range(self.num_models):
-                val, idx = prob_list[m].data.cpu().max(dim=1)
+                val, idx = self.prob_list[m].data.cpu().max(dim=1)
                 num_correct = torch.sum(torch.eq(idx, gts))
                 model_name = "M{}".format(m)
                 self.status[model_name] = num_correct / B
@@ -271,9 +284,10 @@ class VirtualVQANetwork(VirtualNetwork):
 
         B = logit_list[0].size(0)
         # compute oracle accuracy
-        prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
-        for ii in range(len(prob_list)):
-            val, idx = prob_list[ii].max(dim=1)
+        if self.prob_list == None:
+            self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
+        for ii in range(len(self.prob_list)):
+            val, idx = self.prob_list[ii].max(dim=1)
             if ii == 0:
                 correct_mask = torch.eq(idx.cpu().data, gts)
             else:
@@ -286,11 +300,11 @@ class VirtualVQANetwork(VirtualNetwork):
 
     def compute_assignment_accuracy(self, logit_list, gts,
                                    assignment_logits=None, hard=True):
-        """ Compute Accuracy using assignment layer
+        """ Compute Accuracy based on assignment model
         Args:
             logit_list: list of m * [batch_size, num_answers]
             gts: ground-truth answers [batch_size]
-            assignment_logits: logits for model assignment
+            assignment_logits: logits for assignment model
         """
         assert type(logit_list) == type(list()), \
             "logits should be list() for computing predicted assignment-based accuracy"
@@ -302,10 +316,11 @@ class VirtualVQANetwork(VirtualNetwork):
             return
 
         # obtain indices of the highest probability
-        prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
+        if self.prob_list == None:
+            self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
         idx_list = []
-        for ii in range(len(prob_list)):
-            val, idx = prob_list[ii].max(dim=1)
+        for ii in range(len(self.prob_list)):
+            val, idx = self.prob_list[ii].max(dim=1)
             idx_list.append(idx.data.clone().cpu().numpy())
 
         # compute model assignment
@@ -320,7 +335,7 @@ class VirtualVQANetwork(VirtualNetwork):
                     num_correct += 1
         else:
             B, m = assignment_logits.size()
-            prob_tensor = torch.stack([prob.data.cpu() for prob in prob_list], 0) # [m, B, num_answers]
+            prob_tensor = torch.stack([prob.data.cpu() for prob in self.prob_list], 0) # [m, B, num_answers]
             prob_tensor = prob_tensor * assignment_logits.t().contiguous().view(m,B,1).expand_as(prob_tensor)
             prob_tensor = torch.mean(prob_tensor, dim=0) # [B, num_answers]
 
@@ -333,7 +348,7 @@ class VirtualVQANetwork(VirtualNetwork):
         self.pred_assignments = assignments
 
     def compute_gt_assignment_accuracy(self, logit_list, gts, assignments=None):
-        """ Compute Accuracy using assignments with gt
+        """ Compute Accuracy using assignments obtained using oracle loss
         Args:
             logit_list: list of m * [batch_size, num_answers]
             gts: ground-truth answers [batch_size]
@@ -353,10 +368,11 @@ class VirtualVQANetwork(VirtualNetwork):
             assignments = assignments[:, 0]
         assignments = assignments.squeeze()
         # obtain indices of the highest probability
-        prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
+        if self.prob_list == None:
+            self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
         idx_list = []
-        for ii in range(len(prob_list)):
-            val, idx = prob_list[ii].max(dim=1)
+        for ii in range(len(self.prob_list)):
+            val, idx = self.prob_list[ii].max(dim=1)
             idx_list.append(idx.data.clone().cpu().numpy())
 
         # count the correct numbers
@@ -372,6 +388,10 @@ class VirtualVQANetwork(VirtualNetwork):
     def compute_status(self, logits, gts):
         if type(gts) == type(list()):
             gts = gts[0] # we use most frequent answers for vqa
+
+        # setting prob_list and probs as None
+        self.prob_list = None
+        self.probs = None
 
         self.compute_top1_accuracy(logits, gts)
         self.attach_predictions()
@@ -406,6 +426,9 @@ class VirtualVQANetwork(VirtualNetwork):
                 self.logger["train"].info(txt)
             else:
                 self.logger["train"].debug(txt)
+
+            if self.use_tf_summary and self.training_mode:
+                self.write_status_summary(iteration)
 
     def set_is_main_net(self, is_main_net):
         self.is_main_net = is_main_net

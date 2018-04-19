@@ -15,7 +15,6 @@ from src.model import building_networks
 from src.dataset import clevr_dataset, vqa_dataset
 from src.experiment import common_functions as cmf
 from src.utils import accumulator, timer, utils, io_utils
-#from tensorboard_utils import PytorchSummary
 
 """ Get parameters """
 def _get_argument_params():
@@ -29,7 +28,7 @@ def _get_argument_params():
         default="clevr", help="Dataset to train models [clevr | vqa].")
 	parser.add_argument("--num_workers", type=int,
         default=4, help="The number of workers for data loader.")
-	parser.add_argument("--tensorboard_dir" , type=str, default="tensorboard",
+	parser.add_argument("--tensorboard_dir" , type=str, default="./tensorboard",
 		help="Directory for tensorboard")
 	parser.add_argument("--debug_mode" , action="store_true", default=False,
 		help="Train the model in debug mode.")
@@ -77,9 +76,12 @@ def train(config):
     if config["model"]["use_gpu"]:
         net.gpu_mode()
 
+    # Prepare tensorboard
+    net.create_tensorboard_summary(config["misc"]["tensorboard_dir"])
+
     """ Run training network """
     ii = 0
-    tm = timer.Timer()
+    tm = timer.Timer() # tm: timer
     iter_per_epoch = dsets["train"].get_iter_per_epoch()
     for epoch in range(start_epoch, config["optimize"]["num_epoch"]):
         net.train_mode() # set network as train mode
@@ -89,7 +91,7 @@ def train(config):
 
             # maintain sample data to observe learning status
             if ii == 0:
-                sample_data = dsets["train"].get_samples(1)
+                sample_data = dsets["train"].get_samples(10)
                 """ TODO: get samples from both training/test set
                 test_sample_data = dsets["test"].get_samples(5))
                 """

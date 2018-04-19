@@ -700,96 +700,69 @@ class EnsembleLoss(nn.Module):
             total_loss = min_val.sum() / B
             # End of sMCL
 
-        elif self.version == "margin-MCL":
-            """
-            similar to CMCL, but just letting the margin over the probability at GT
-            within a threshold instead of producing uniform distribution
-            """
+        else:
+            if self.version == "margin-MCL":
+                """ similar to CMCL, but just letting the margin over the probability at GT
+                    within a threshold instead of producing uniform distribution
+                """
 
-            # compute margins
-            if self.use_logit:
-                logits = logit_list
-            else:
-                logits = [F.softmax(logit, dim=1) for logit in logit_list]
-
-            nonspecialist_loss_list = [net_utils.compute_margin_loss(
-                logits, labels, mi, self.margin_threshold, reduce=False) \
-                for mi in range(self.m)]
-
-            # compute oracle loss
-            oracle_loss_list = []
-            for mi in range(self.m):
-                oracle_loss_list.append(task_loss_list[mi] \
-                    + self.beta*nonspecialist_loss_list[mi])
-
-            # compute assignments
-            oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
-            if self.get_assign_as_sMCL:
-                min_val, min_idx = task_loss_tensor.t().topk(self.k, dim=1, largest=False)
-                self.assignments = net_utils.get_data(min_idx) # [B,k]
-                min_idx = min_idx.t()
-            else:
-                min_val, min_idx = oracle_loss_tensor.t().topk(
-                        self.k, dim=1, largest=False) # [B,k]
-                self.assignments = net_utils.get_data(min_idx) # [B,k]
-                min_idx = min_idx.t() # [k,B]
-
-            nonspecialist_loss_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
-            #print(nonspecialist_loss_tensor) # [M, b]
-            txt = "margin-MCL logit {} | CE {} | margin {} | ORACLE {} ".format(
-                "/".join("{:.3f}".format(
-                    logit_list[i].data[0].max()) for i in range(self.m)),
-                "/".join("{:.3f}".format(
-                    task_loss_tensor[i,0].data[0]) for i in range(self.m)),
-                "/".join("{:6.3f}".format(
-                    self.beta*nonspecialist_loss_tensor[i,0].data[0]) for i in range(self.m)),
-                "/".join("{:6.3f}".format(
-                    oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
-            print(txt, end="")
-            if (self.iteration % (100)) == 0:
-                log_txt += txt
-
-            zero_mask = Variable(
-                torch.from_numpy(np.zeros(B)).float(), requires_grad=False) # [B]
-            if self.use_gpu and torch.cuda.is_available():
-                zero_mask = zero_mask.cuda()
-
-            # compute loss with assignments
-            total_loss = 0
-            for mi in range(self.m):
-                for topk in range(self.k):
-                    selected_mask = min_idx[topk].eq(mi).float() # [B]
-                    if self.use_gpu and torch.cuda.is_available():
-                        selected_mask = selected_mask.cuda()
-
-                    cur_loss = net_utils.where(selected_mask,
-                            task_loss_list[mi] - self.beta*nonspecialist_loss_list[mi],
-                            zero_mask)
-                    total_loss += cur_loss.sum()
-            total_loss += (self.beta*sum(nonspecialist_loss_list[:])).sum()
-            #total_loss = total_loss / self.m / B / self.k
-            total_loss = total_loss / B / self.k
-            # End of margin-MCL
-
-        elif self.version == "margin-MCL-deprecated":
-            """
-            similar to CMCL, but just letting the margin over the probability at GT
-            within a threshold instead of producing uniform distribution
-            """
-
-            # compute oracle loss
-            margin_list = net_utils.compute_logit_margin(
-                    logit_list, labels, self.margin_threshold, reduce=False)
-
-            oracle_loss_list = []
-            for mi in range(self.m):
-                if (mi+1) != self.m:
-                    oracle_loss_list.append( task_loss_list[mi] \
-                            + self.beta * (sum(margin_list[:mi]) \
-                            + sum(margin_list[mi+1:]))) # m * [B,]
+                # compute margins
+                if self.use_logit:
+                    logits = logit_list
                 else:
+                    logits = [(F.softmax(logit, dim=1) + 1e-5).log_() for logit in logit_list]
+
+                nonspecialist_loss_list = [net_utils.compute_margin_loss(
+                    logits, labels, mi, self.margin_threshold, reduce=False) \
+                    for mi in range(self.m)]
+
+                # compute oracle loss
+                oracle_loss_list = []
+                for mi in range(self.m):
                     oracle_loss_list.append(task_loss_list[mi] \
-                            + self.beta * sum(margin_list[:mi])) # m*[B]
+                        + self.beta*nonspecialist_loss_list[mi])
+
+                # for printing status
+                txt = "margin-MCL CE {} | margin {} | ORACLE {} "
+
+            elif self.version == "KD-MCL":
+                # compute KL divergence with teacher distribution for each model
+                nonspecialist_loss_list = self.compute_kld(logit_list, inp[-1])
+
+                # compute oracle loss
+                oracle_loss_list = []
+                for mi in range(self.m):
+                    if (mi+1) != self.m:
+                        oracle_loss_list.append( task_loss_list[mi] \
+                                + self.beta * (sum(nonspecialist_loss_list[:mi]) \
+                                + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
+                    else:
+                        oracle_loss_list.append(task_loss_list[mi] \
+                                + self.beta * sum(nonspecialist_loss_list[:mi])) # m*[B]
+
+                # for printing status
+                txt = "KD-MCL CE {} | KLD {} | ORACLE {} "
+
+            elif self.version in ["CMCL_v0", "CMCL_v1"]:
+                # compute KL divergence with Uniform distribution for each model
+                prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
+                             for logit in logit_list] # m*[B,C]
+                nonspecialist_loss_list = [(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
+                                for prob in prob_list] # m*[B]
+                oracle_loss_list = []
+                for mi in range(self.m):
+                    if (mi+1) != self.m:
+                        oracle_loss_list.append( task_loss_list[mi] \
+                            + self.beta*(sum(nonspecialist_loss_list[:mi])\
+                                + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
+                    else:
+                        oracle_loss_list.append(task_loss_list[mi] \
+                                + self.beta*sum(nonspecialist_loss_list[:mi])) # m*[B]
+
+                # for printing status
+                txt = self.version + " CE {} | ENT {} | ORACLE {} "
+            else:
+                raise NotImplementedError("Not supported version ensemble loss (%s)" % self.version)
 
             # compute assignments
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
@@ -798,39 +771,199 @@ class EnsembleLoss(nn.Module):
             self.assignments = net_utils.get_data(min_idx) # [B,k]
             min_idx = min_idx.t() # [k,B]
 
-            margin_tensor = torch.stack(margin_list, dim=0) # [m,B]
-            txt = "margin-MCL logit {} | CE {} | margin {} | ORACLE {} ".format(
-                "/".join("{:.3f}".format(
-                    logit_list[i].data[0].max()) for i in range(self.m)),
+            nonspecialist_loss_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
+
+            # compute loss with assignments
+            if self.version == "CMCL_v1":
+                # sampling labels stochastically
+                np_random_labels = np.random.randint(0, self.num_labels, size=(self.m, B))
+                random_labels = Variable(
+                    torch.from_numpy(np_random_labels), requires_grad=False).long() # [m, B]
+                one_mask = Variable(
+                    torch.from_numpy(np.ones(B)).float(), requires_grad=False) # [B]
+                beta_mask = Variable(
+                    torch.from_numpy(np.full((B), self.beta)).float(), requires_grad=False) # [B]
+
+                if self.use_gpu and torch.cuda.is_available():
+                    random_labels = random_labels.cuda()
+                    one_mask = one_mask.cuda()
+                    beta_mask = beta_mask.cuda()
+
+                # compute loss
+                for mi in range(self.m):
+                    for topk in range(self.k):
+                        selected_mask = min_idx[topk].eq(mi).long() # [B]
+                        if self.use_gpu and torch.cuda.is_available():
+                            selected_mask = selected_mask.cuda()
+
+                        if topk == 0:
+                            sampled_labels = net_utils.where(selected_mask, labels, random_labels[mi])
+                            coeffi = selected_mask
+                        else:
+                            sampled_labels = net_utils.where(selected_mask, labels, sampled_labels)
+                            coeffi += selected_mask
+
+                    finally_selected = coeffi.ge(1.0).float()
+                    coeff = net_utils.where(finally_selected, one_mask, beta_mask)
+                    loss = coeff * F.cross_entropy(logit_list[mi], sampled_labels, reduce=False)
+                    if mi == 0:
+                        #total_loss = (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
+                        #total_loss = (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
+                        total_loss = loss.sum() / self.m / B
+                    else:
+                        #total_loss += (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
+                        #total_loss += (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
+                        total_loss += (loss.sum() / self.m / B)
+                # end of CMCL v1
+            else:
+                zero_mask = Variable(
+                    torch.from_numpy(np.zeros(B)).float(), requires_grad=False) # [B]
+                if self.use_gpu and torch.cuda.is_available():
+                    zero_mask = zero_mask.cuda()
+                total_loss = 0
+                for mi in range(self.m):
+                    for topk in range(self.k):
+                        selected_mask = min_idx[topk].eq(mi).float() # [B]
+                        if self.use_gpu and torch.cuda.is_available():
+                            selected_mask = selected_mask.cuda()
+
+                        cur_loss = net_utils.where(selected_mask,
+                                task_loss_list[mi] - self.beta*nonspecialist_loss_list[mi],
+                                zero_mask)
+                        total_loss += cur_loss.sum()
+                total_loss += (self.beta*sum(nonspecialist_loss_list[:])).sum()
+                #total_loss = total_loss / self.m / B / self.k
+                total_loss = total_loss / B / self.k
+                # End
+
+            txt = txt.format( \
                 "/".join("{:.3f}".format(
                     task_loss_tensor[i,0].data[0]) for i in range(self.m)),
                 "/".join("{:6.3f}".format(
-                    margin_tensor[i,0].data[0]) for i in range(self.m)),
+                    nonspecialist_loss_tensor[i,0].data[0]) for i in range(self.m)),
                 "/".join("{:6.3f}".format(
                     oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
             print(txt, end="")
             if (self.iteration % (100)) == 0:
                 log_txt += txt
+            # end for computing oracle loss
 
-            # compute loss with assignments
-            total_loss = 0
-            for mi in range(self.m):
-                for topk in range(self.k):
-                    selected_mask = min_idx[topk].eq(mi).float() # [B]
-                    if self.use_gpu and torch.cuda.is_available():
-                        selected_mask = selected_mask.cuda()
+        if self.use_ensemble_loss:
+            logits = torch.stack(logit_list, 0).mean(dim=0)
+            probs = F.softmax(logits, dim=1)
+            ensemble_loss = F.cross_entropy(probs, labels)
+            total_loss += ensemble_loss
+            txt = "EL {:.3f} ".format(ensemble_loss.data[0])
+            print(txt, end="")
+            if (self.iteration % (100)) == 0:
+                log_txt += txt
 
-                    cur_loss = net_utils.where(selected_mask,
-                            task_loss_list[mi], self.beta*margin_list[mi])
-                    total_loss += cur_loss.sum()
-            #total_loss = total_loss / self.m / B / self.k
-            total_loss = total_loss / B / self.k
-            # End of margin-MCL
+        if self.version != "IE":
+            txt = "|".join("{:03d}".format(
+                min_idx[0].eq(i).sum().data[0])
+                for i in range(self.m))
+            print(txt, end="\r")
+            if (self.iteration % (100)) == 0:
+                self.logger.info(log_txt + txt)
 
+        # learn to predict assignment using question features
+        if self.use_assignment_model and (self.version != "IE"):
+            assignment_gt = Variable(
+                self.assignments[:, 0].clone().long(),
+                requires_grad=False)
+            if self.use_gpu and torch.cuda.is_available():
+                assignment_gt = assignment_gt.cuda()
+
+            self.assignment_loss = self.assignment_criterion(
+                    assignment_logits, assignment_gt)
+            total_loss += self.assignment_loss
+        else:
+            self.assignment_loss = None
+
+        # increment the iteration number
+        self.iteration += 1
+
+        return total_loss
+
+    def compute_kld(self, logit_list, teacher_list):
+        # compute KL divergence with teacher distribution for each model
+        if self.use_KD_loss_with_ensemble:
+            print("Ensembled teacher logit ", end="")
+            # logit version
+            teacher_logit = sum(teacher_list) / self.m
+            nonspecialist_loss_list = [net_utils.compute_kl_div( \
+                student_logit, teacher_logit, self.tau) \
+                for student_logit in logit_list] # m*[B]
+            # prob version
+            teacher_prob = sum([F.softmax(tl, dim=1) for tl in teacher_list]) / self.m
+            nonspecialist_loss_list = [net_utils.compute_kl_div( \
+                student_logit, teacher_prob, self.tau, False) \
+                for student_logit in logit_list] # m*[B]
+        else:
+            nonspecialist_loss_list = [net_utils.compute_kl_div( \
+                student_logit, teacher_logit, self.tau) \
+                for student_logit, teacher_logit \
+                in zip(logit_list, teacher_list)] # m*[B]
+        return nonspecialist_loss_list
+
+
+class KLDLoss(nn.Module):
+    def __init__(self, config):
+        super(KLDLoss, self).__init__() # Must call super __init__()
+
+        self.tau = utils.get_value_from_dict(config["model"], "tau", 1)
+        self.reduce = utils.get_value_from_dict(config["model"], "loss_reduce", True)
+        self.apply_softmax_on_teacher = True
+
+    def forward(self, logits, gts):
+        # This method accepts ground-truth as second argument
+        # to be consistent with VirtualNetwork Class.
+        # Thus, we do not use gts to compute KL divergence loss.
+        student = logits[0]
+        teacher = logits[1]
+        return net_utils.compute_kl_div(student, teacher,
+                    self.tau, self.apply_softmax_on_teacher, self.reduce)
+
+
+
+class MultipleCriterion(nn.Module):
+    def __init__(self, criterion=nn.CrossEntropyLoss(), loss_reduce=True):
+        super(MultipleCriterion, self).__init__() # Must call super __init__()
+
+        self.criterion = criterion
+        self.criterion.reduce = False
+        self.loss_reduce = loss_reduce
+
+    def forward(self, inp, labels):
+        """
+        Args:
+            inp: list of two items: logit list (m * [B, C]) and CrossEntropyLoss list (m * [B,])
+            labels: list of [answers, all_answers, mask]
+                - answers: do not use this
+                - all_answers: all answers [B, A]
+                - mask: mask of answers [B, A]
+        """
+        all_labels = labels[1]
+        mask = labels[2]
+        _, C = inp.size()
+        B, A = all_labels.size()
+
+        flat_inp = inp.view(B,1,C).expand(B,A,C).contiguous().view(B*A,C)
+        flat_all_labels = all_labels.view(B*A)
+
+        loss = self.criterion(flat_inp, flat_all_labels)
+        loss = loss * mask.view(B*A)
+        loss = loss.view(B,A).mean(dim=1)
+
+        if self.loss_reduce:
+            loss = loss.mean()
+
+        return loss
+
+"""
         elif self.version == "KD-MCL":
-            """ obtain assignments (sorting oracle loss) """
             # compute KL divergence with teacher distribution for each model
-            KLD_list = self.compute_kld(logit_list, inp[-1])
+            nonspecialist_loss_list = self.compute_kld(logit_list, inp[-1])
 
             # compute or get assignments
             if self.use_initial_assignment:
@@ -898,11 +1031,11 @@ class EnsembleLoss(nn.Module):
                 for mi in range(self.m):
                     if (mi+1) != self.m:
                         oracle_loss_list.append( task_loss_list[mi] \
-                                + self.beta * (sum(KLD_list[:mi]) \
-                                + sum(KLD_list[mi+1:]))) # m * [B,]
+                                + self.beta * (sum(nonspecialist_loss_list[:mi]) \
+                                + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
                     else:
                         oracle_loss_list.append(task_loss_list[mi] \
-                                + self.beta * sum(KLD_list[:mi])) # m*[B]
+                                + self.beta * sum(nonspecialist_loss_list[:mi])) # m*[B]
 
                 # compute assignments
                 oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
@@ -911,7 +1044,7 @@ class EnsembleLoss(nn.Module):
                 self.assignments = net_utils.get_data(min_idx) # [B,k]
                 min_idx = min_idx.t() # [k,B]
 
-                KLD_tensor = torch.stack(KLD_list, dim=0) # [m,B]
+                KLD_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
                 txt = "KD-MCL CE {} | KLD {} | ORACLE {} ".format(
                     "/".join("{:.3f}".format(
                         task_loss_tensor[i,0].data[0]) for i in range(self.m)),
@@ -932,270 +1065,10 @@ class EnsembleLoss(nn.Module):
                         selected_mask = selected_mask.cuda()
 
                     cur_loss = net_utils.where(selected_mask,
-                            task_loss_list[mi], self.beta*KLD_list[mi])
+                            task_loss_list[mi], self.beta*nonspecialist_loss_list[mi])
                     total_loss += cur_loss.sum()
             #total_loss = total_loss / self.m / B / self.k
             total_loss = total_loss / B
             # End of KD-MCL
 
-        elif self.version == "ALL":
-            txt = "ALL loss "
-            print(txt, end="")
-            if (self.iteration % (100)) == 0:
-                log_txt += txt
-            # compute KL divergence with teacher distribution for each model
-            KLD_list = self.compute_kld(logit_list, inp[-1])
-            # compute KL divergence with Uniform distribution for each model
-            prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
-                         for logit in logit_list] # m*[B,C]
-            ENT_list = [(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
-                            for prob in prob_list] # m*[B]
-
-            # compute oracle loss
-            oracle_loss_list = []
-            for mi in range(self.m):
-                if (mi+1) != self.m:
-                    oracle_loss_list.append( task_loss_list[mi] \
-                        + self.beta * (sum(KLD_list[:mi])+sum(KLD_list[mi+1:])) \
-                        + 0.5 * (sum(ENT_list[:mi])+sum(ENT_list[mi+1:])) \
-                    ) # m * [B,]
-                else:
-                    oracle_loss_list.append(task_loss_list[mi] \
-                        + self.beta * sum(KLD_list[:mi]) \
-                        + 0.5 * sum(ENT_list[:mi])
-                    ) # m*[B]
-
-            # compute assignments
-            oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
-            min_val, min_idx = oracle_loss_tensor.t().topk(
-                    self.k, dim=1, largest=False) # [B,k]
-            self.assignments = net_utils.get_data(min_idx) # [B,k]
-            min_idx = min_idx.t() # [k,B]
-
-            # compute loss with assignments
-            total_loss = 0
-            for mi in range(self.m):
-                for topk in range(self.k):
-                    selected_mask = min_idx[topk].eq(mi).float() # [B]
-                    if self.use_gpu and torch.cuda.is_available():
-                        selected_mask = selected_mask.cuda()
-
-                    cur_loss = net_utils.where(selected_mask,
-                            task_loss_list[mi], self.beta*KLD_list[mi]+0.5*ENT_list[mi])
-                    total_loss += cur_loss.sum()
-            #total_loss = total_loss / self.m / B / self.k
-            total_loss = total_loss / B
-            # end of ALL
-
-        else:
-            """ compute assignments (sorting confident oracle loss) """
-            # compute KL divergence with Uniform distribution for each model
-            prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
-                         for logit in logit_list] # m*[B,C]
-            ENT_list = [(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
-                            for prob in prob_list] # m*[B]
-            oracle_loss_list = []
-            for mi in range(self.m):
-                if (mi+1) != self.m:
-                    oracle_loss_list.append( task_loss_list[mi] \
-                        + self.beta*(sum(ENT_list[:mi])+sum(ENT_list[mi+1:]))) # m * [B,]
-                else:
-                    oracle_loss_list.append(task_loss_list[mi] \
-                            + self.beta*sum(ENT_list[:mi])) # m*[B]
-
-            oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
-            entropy_tensor = torch.stack(ENT_list, dim=0) # [m,B]
-
-            min_val, min_idx = oracle_loss_tensor.t().topk(self.k, dim=1, largest=False) # [B,k]
-            self.assignments = net_utils.get_data(min_idx) # [B,k]
-            min_idx = min_idx.t() # [k,B]
-
-            if self.version == "CMCL_v0":
-                txt = "CMCL v0 "
-                print(txt, end="")
-                if (self.iteration % (100)) == 0:
-                    log_txt += txt
-                total_loss = 0
-                for mi in range(self.m):
-                    for topk in range(self.k):
-                        selected_mask = min_idx[topk].eq(mi).float() # [B]
-                        if self.use_gpu and torch.cuda.is_available():
-                            selected_mask = selected_mask.cuda()
-
-                        total_loss += net_utils.where(selected_mask,
-                                task_loss_list[mi], self.beta*ENT_list[mi]).sum()
-                total_loss += (self.beta*sum(ENT_list)).sum()
-                total_loss = total_loss / self.m / B
-                # end of CMCL v0
-
-            elif self.version == "CMCL_v1":
-                txt = "CMCL v1 "
-                print( txt, end="")
-                if (self.iteration % (100)) == 0:
-                    log_txt += txt
-                # sampling stochastically labels
-                np_random_labels = np.random.randint(0, self.num_labels, size=(self.m, B))
-                random_labels = Variable(
-                    torch.from_numpy(np_random_labels), requires_grad=False).long() # [m, B]
-                one_mask = Variable(
-                    torch.from_numpy(np.ones(B)).float(), requires_grad=False) # [B]
-                beta_mask = Variable(
-                    torch.from_numpy(np.full((B), self.beta)).float(), requires_grad=False) # [B]
-
-                if self.use_gpu and torch.cuda.is_available():
-                    random_labels = random_labels.cuda()
-                    one_mask = one_mask.cuda()
-                    beta_mask = beta_mask.cuda()
-
-                # compute loss
-                for mi in range(self.m):
-                    for topk in range(self.k):
-                        selected_mask = min_idx[topk].eq(mi).long() # [B]
-                        if self.use_gpu and torch.cuda.is_available():
-                            selected_mask = selected_mask.cuda()
-
-                        if topk == 0:
-                            sampled_labels = net_utils.where(selected_mask, labels, random_labels[mi])
-                            coeffi = selected_mask
-                        else:
-                            sampled_labels = net_utils.where(selected_mask, labels, sampled_labels)
-                            coeffi += selected_mask
-
-                    finally_selected = coeffi.ge(1.0).float()
-                    coeff = net_utils.where(finally_selected, one_mask, beta_mask)
-                    loss = coeff * F.cross_entropy(logit_list[mi], sampled_labels, reduce=False)
-                    if mi == 0:
-                        #total_loss = (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
-                        #total_loss = (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
-                        total_loss = loss.sum() / self.m / B
-                    else:
-                        #total_loss += (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
-                        #total_loss += (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
-                        total_loss += (loss.sum() / self.m / B)
-                # end of CMCL v1
-
-            else:
-                raise NotImplementedError("Not supported version for CMCL Loss %s" % self.version)
-
-            txt = "CE {} || ENT {} | ORACLE {} ".format(
-                "/".join("{:.3f}".format(
-                    task_loss_tensor[i,0].data[0]) for i in range(self.m)),
-                "/".join("{:6.2f}".format(
-                    entropy_tensor[i,0].data[0]) for i in range(self.m)),
-                "/".join("{:6.2f}".format(
-                    oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
-            print(txt, end="")
-            if (self.iteration % (100)) == 0:
-                log_txt += txt
-
-        if self.use_ensemble_loss:
-            logits = torch.stack(logit_list, 0).mean(dim=0)
-            probs = F.softmax(logits, dim=1)
-            ensemble_loss = F.cross_entropy(probs, labels)
-            total_loss += ensemble_loss
-            txt = "EL {:.3f} ".format(ensemble_loss.data[0])
-            print(txt, end="")
-            if (self.iteration % (100)) == 0:
-                log_txt += txt
-
-        if self.version != "IE":
-            txt = "|".join("{:03d}".format(
-                min_idx[0].eq(i).sum().data[0])
-                for i in range(self.m))
-            print(txt, end="\r")
-            if (self.iteration % (100)) == 0:
-                self.logger.info(log_txt + txt)
-
-        # learn to predict assignment using question features
-        if self.use_assignment_model and (self.version != "IE"):
-            assignment_gt = Variable(
-                self.assignments[:, 0].clone().long(),
-                requires_grad=False)
-            if self.use_gpu and torch.cuda.is_available():
-                assignment_gt = assignment_gt.cuda()
-
-            self.assignment_loss = self.assignment_criterion(
-                    assignment_logits, assignment_gt)
-            total_loss += self.assignment_loss
-        else:
-            self.assignment_loss = None
-
-        # increment the iteration number
-        self.iteration += 1
-
-        return total_loss
-
-    def compute_kld(self, logit_list, teacher_list):
-        # compute KL divergence with teacher distribution for each model
-        if self.use_KD_loss_with_ensemble:
-            print("Ensembled teacher logit ", end="")
-            # logit version
-            teacher_logit = sum(teacher_list) / self.m
-            KLD_list = [net_utils.compute_kl_div( \
-                student_logit, teacher_logit, self.tau) \
-                for student_logit in logit_list] # m*[B]
-            # prob version
-            teacher_prob = sum([F.softmax(tl, dim=1) for tl in teacher_list]) / self.m
-            KLD_list = [net_utils.compute_kl_div( \
-                student_logit, teacher_prob, self.tau, False) \
-                for student_logit in logit_list] # m*[B]
-        else:
-            KLD_list = [net_utils.compute_kl_div( \
-                student_logit, teacher_logit, self.tau) \
-                for student_logit, teacher_logit \
-                in zip(logit_list, teacher_list)] # m*[B]
-        return KLD_list
-
-
-class KLDLoss(nn.Module):
-    def __init__(self, config):
-        super(KLDLoss, self).__init__() # Must call super __init__()
-
-        self.tau = utils.get_value_from_dict(config["model"], "tau", 1)
-        self.reduce = utils.get_value_from_dict(config["model"], "loss_reduce", True)
-        self.apply_softmax_on_teacher = True
-
-    def forward(self, logits, gts):
-        # This method accepts ground-truth as second argument
-        # to be consistent with VirtualNetwork Class.
-        # Thus, we do not use gts to compute KL divergence loss.
-        student = logits[0]
-        teacher = logits[1]
-        return net_utils.compute_kl_div(student, teacher,
-                    self.tau, self.apply_softmax_on_teacher, self.reduce)
-
-
-
-class MultipleCriterion(nn.Module):
-    def __init__(self, criterion=nn.CrossEntropyLoss(), loss_reduce=True):
-        super(MultipleCriterion, self).__init__() # Must call super __init__()
-
-        self.criterion = criterion
-        self.criterion.reduce = False
-        self.loss_reduce = loss_reduce
-
-    def forward(self, inp, labels):
-        """
-        Args:
-            inp: list of two items: logit list (m * [B, C]) and CrossEntropyLoss list (m * [B,])
-            labels: list of [answers, all_answers, mask]
-                - answers: do not use this
-                - all_answers: all answers [B, A]
-                - mask: mask of answers [B, A]
-        """
-        all_labels = labels[1]
-        mask = labels[2]
-        _, C = inp.size()
-        B, A = all_labels.size()
-
-        flat_inp = inp.view(B,1,C).expand(B,A,C).contiguous().view(B*A,C)
-        flat_all_labels = all_labels.view(B*A)
-
-        loss = self.criterion(flat_inp, flat_all_labels)
-        loss = loss * mask.view(B*A)
-        loss = loss.view(B,A).mean(dim=1)
-
-        if self.loss_reduce:
-            loss = loss.mean()
-
-        return loss
+"""

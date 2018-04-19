@@ -265,7 +265,8 @@ class Ensemble(VirtualVQANetwork):
             self.status["loss"] = 0
             if self.config["model"]["use_assignment_model"]:
                 self.status["sel-loss"] = 0
-            self.status["top1"] = 0
+            self.status["top1-avg"] = 0
+            self.status["top1-max"] = 0
             self.status["oracle"] = 0
             if self.config["model"]["use_assignment_model"]:
                 self.status["sel-acc"] = 0
@@ -296,6 +297,10 @@ class Ensemble(VirtualVQANetwork):
         """
         if type(gts) == type(list()):
             gts = gts[0] # we use most frequent answers for vqa
+
+        # setting prob_list and probs as None
+        self.prob_list = None
+        self.probs = None
 
         logit_list = net_output[0]
         self.compute_top1_accuracy(logit_list, gts)
@@ -360,18 +365,22 @@ class Ensemble(VirtualVQANetwork):
             # print learning information
             log(txt)
 
+            if self.use_tf_summary and self.training_mode:
+                self.write_status_summary(iteration)
+
     def _create_counters(self):
         self.counters = OrderedDict()
         self.counters["loss"] = accumulator.Accumulator("loss")
         if self.config["model"]["use_assignment_model"]:
             self.counters["sel-loss"] = accumulator.Accumulator("sel-loss")
-        self.counters["top1"] = accumulator.Accumulator("top1")
+        self.counters["top1-avg"] = accumulator.Accumulator("top1-avg")
+        self.counters["top1-max"] = accumulator.Accumulator("top1-max")
         self.counters["oracle"] = accumulator.Accumulator("oracle")
         if self.config["model"]["use_assignment_model"]:
             self.counters["sel-acc"] = accumulator.Accumulator("sel-acc")
 
     def bring_loader_info(self, dataset):
-        super(Ensemble, self).bring_loader_info(dataset) # Must call super __init__()
+        super(Ensemble, self).bring_loader_info(dataset)
 
         for m in range(self.num_models):
             self.net_list[m].bring_loader_info(dataset)

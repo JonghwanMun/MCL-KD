@@ -9,11 +9,11 @@ from torch.autograd import Variable
 
 from src.utils import accumulator, utils, io_utils, net_utils
 
-def get_data(data):
-    if type(data) == type(list()):
-        return [dt.clone().cpu().data for dt in data]
+def get_data(ptdata):
+    if type(ptdata) == type(list()):
+        return [dt.clone().cpu().data for dt in ptdata]
     else:
-        return data.clone().cpu().data
+        return ptdata.clone().cpu().data
 
 def where(cond, x1, x2):
     """ Differentiable equivalent of np.where (or tf.where)
