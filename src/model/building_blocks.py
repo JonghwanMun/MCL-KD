@@ -177,6 +177,8 @@ class ResBlock2D(nn.Module):
             config, name+"num_blocks", 1)
         self.use_downsample = utils.get_value_from_dict(
             config, name+"use_downsample", False)
+        self.use_attention_transfer = utils.get_value_from_dict(
+            config, "use_attention_transfer", False)
 
         # set layers
         if self.use_downsample:
@@ -197,6 +199,8 @@ class ResBlock2D(nn.Module):
         Returns:
             answer_label : [B, out_dim, H, w]
         """
+        if self.use_attention_transfer:
+            att_groups = []
         residual = inp
         for i in range(self.num_blocks):
             out = self.blocks[i](residual)
@@ -205,7 +209,15 @@ class ResBlock2D(nn.Module):
             out += residual
             out = F.relu(out)
             residual = out
-        return out
+            if self.use_attention_transfer:
+                att_groups.append(out)
+
+        return_val = {
+            "feats": out,
+        }
+        if self.use_attention_transfer:
+            return_val["att_groups"] = att_groups
+        return return_val
 
 class Embedding2D(nn.Module):
     def __init__(self, config, name=""):
@@ -641,8 +653,12 @@ class EnsembleLoss(nn.Module):
                 config, "margin_threshold", 1.0)
         self.use_logit = utils.get_value_from_dict(
                 config, "margin_in_logit", True)
-        self.get_assign_as_sMCL= utils.get_value_from_dict(
-                config, "get_assign_as_sMCL", False)
+
+        # options for attention transfer
+        self.use_attention_transfer = utils.get_value_from_dict(
+                config, "use_attention_transfer", False)
+        if self.use_attention_transfer:
+            self.at_criterion = AttentionTransferLoss(config)
 
         # options for assignment model
         self.use_assignment_model = utils.get_value_from_dict(
@@ -710,7 +726,8 @@ class EnsembleLoss(nn.Module):
                 if self.use_logit:
                     logits = logit_list
                 else:
-                    logits = [(F.softmax(logit, dim=1) + 1e-5).log_() for logit in logit_list]
+                    logits = [(F.softmax(logit, dim=1) + 1e-5).log_() \
+                              for logit in logit_list]
 
                 nonspecialist_loss_list = [net_utils.compute_margin_loss(
                     logits, labels, mi, self.margin_threshold, reduce=False) \
@@ -762,7 +779,7 @@ class EnsembleLoss(nn.Module):
                 # for printing status
                 txt = self.version + " CE {} | ENT {} | ORACLE {} "
             else:
-                raise NotImplementedError("Not supported version ensemble loss (%s)" % self.version)
+                raise NotImplementedError("Not supported version of ensemble loss (%s)" % self.version)
 
             # compute assignments
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
@@ -858,14 +875,6 @@ class EnsembleLoss(nn.Module):
             if (self.iteration % (100)) == 0:
                 log_txt += txt
 
-        if self.version != "IE":
-            txt = "|".join("{:03d}".format(
-                min_idx[0].eq(i).sum().data[0])
-                for i in range(self.m))
-            print(txt, end="\r")
-            if (self.iteration % (100)) == 0:
-                self.logger.info(log_txt + txt)
-
         # learn to predict assignment using question features
         if self.use_assignment_model and (self.version != "IE"):
             assignment_gt = Variable(
@@ -879,6 +888,24 @@ class EnsembleLoss(nn.Module):
             total_loss += self.assignment_loss
         else:
             self.assignment_loss = None
+
+        if self.use_attention_transfer:
+            student_groups = inp[-2] # m*[groups]
+            teacher_groups = inp[-1] # m*[groups]
+            at_loss = self.at_criterion([student_groups, teacher_groups], labels)
+            total_loss += at_loss
+            txt = " AT {:.3f} ".format(at_loss.data[0])
+            print(txt, end="")
+            if (self.iteration % (100)) == 0:
+                log_txt += txt
+
+        if self.version != "IE":
+            txt = "|".join("{:03d}".format(
+                min_idx[0].eq(i).sum().data[0])
+                for i in range(self.m))
+            print(txt, end="\r")
+            if (self.iteration % (100)) == 0:
+                self.logger.info(log_txt + txt)
 
         # increment the iteration number
         self.iteration += 1
@@ -906,6 +933,34 @@ class EnsembleLoss(nn.Module):
                 in zip(logit_list, teacher_list)] # m*[B]
         return nonspecialist_loss_list
 
+class AttentionTransferLoss(nn.Module):
+    def __init__(self, config):
+        super(AttentionTransferLoss, self).__init__() # Must call super __init__()
+        self.att_transfer_beta = utils.get_value_from_dict(config, "att_transfer_beta", 1000)
+
+    def forward(self, logits, gts):
+        # This method accepts ground-truth as second argument
+        # to be consistent with VirtualNetwork Class.
+        # Thus, we do not use gts to compute KL divergence loss.
+        student = logits[0]
+        teacher = logits[1]
+        assert len(student) == len(teacher), \
+            "[AttentionTransferLoss] The number of layers should be same for student and teacher"
+
+        at_loss_list = []
+        num_models = len(student)
+        for m in range(num_models):
+            for s,t in zip(student[m], teacher[m]):
+                at_loss_list.append(
+                    (self.get_attention(s)-self.get_attention(t)).pow(2).mean()
+                )
+
+        return sum(at_loss_list) * self.att_transfer_beta
+
+    def get_attention(self, logit):
+        # return l2_norm( \sum_c|logit_c|^p ) where p=2
+        B = logit.size(0)
+        return F.normalize(logit.pow(2).mean(1).view(B,-1)) # [B, h*w]
 
 class KLDLoss(nn.Module):
     def __init__(self, config):
@@ -916,6 +971,10 @@ class KLDLoss(nn.Module):
         self.apply_softmax_on_teacher = True
 
     def forward(self, logits, gts):
+        """
+        Args:
+            logits: list of two items; [student logits list, teacher logits list]
+        """
         # This method accepts ground-truth as second argument
         # to be consistent with VirtualNetwork Class.
         # Thus, we do not use gts to compute KL divergence loss.

@@ -19,6 +19,8 @@ def get_model(base_model_type):
         M = getattr(building_networks, "SAN")
     elif base_model_type in ["saaa", "SAAA"]:
         M = getattr(building_networks, "SAAA")
+    elif base_model_type in ["sharedsaaa", "SharedSAAA"]:
+        M = getattr(building_networks, "SharedSAAA")
     elif base_model_type in ["ensemble", "ENSEMBLE"]:
         M = getattr(building_networks, "Ensemble")
     else:
@@ -111,7 +113,7 @@ def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verb
             break
         # end for batch in loader
 
-    net.metric = net.counters["top1"].get_average() # would be used for tuning parameter
+    net.metric = net.counters["top1-avg"].get_average() # would be used for tuning parameter
     net.print_counters_info(epoch+1, logger_name=logger_name, mode=mode)
     net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
 

@@ -102,19 +102,21 @@ class VirtualVQANetwork(VirtualNetwork):
         self.logger["train"].info("[{}] are initialized from checkpoint ({})".format(
                 "|".join(model_state_dict.keys()), ckpt_path))
 
-    def save_checkpoint(self, cid):
+    def save_checkpoint(self, cid, modelname=None):
         """ Save checkpoint of the network.
         Args:
-            cid: id of checkpoint
+            cid: id of checkpoint; e.g. epoch
         """
+        if modelname == None:
+            modelname = "checkpoint"
         ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
-                "checkpoints", "checkpoint_epoch_{:03d}.pkl")
+                "checkpoints", "{}_epoch_{:03d}.pkl")
+        ckpt_path = ckpt_path.format(modelname, cid)
         model_state_dict = OrderedDict()
         for m in self.model_list:
             model_state_dict[m] = self[m].state_dict()
-        torch.save(model_state_dict, ckpt_path.format(cid))
-        self.logger["train"].info("Checkpoint is saved in {}".format(
-                ckpt_path.format(cid)))
+        torch.save(model_state_dict, ckpt_path)
+        self.logger["train"].info("Checkpoint is saved in {}".format(ckpt_path))
 
     def attach_assignments(self, gts):
         """ Attach assignments to save later and sort assignments

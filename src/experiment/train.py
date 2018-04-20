@@ -134,7 +134,7 @@ def train(config):
         # visualize results
         net.save_results(sample_data, "epoch_{:03d}".format(epoch+1), mode="train")
 
-        # print learning information
+        # print status (metric) accumulated over each epoch
         net.print_counters_info(epoch+1, logger_name="epoch", mode="Train")
 
         # validate network

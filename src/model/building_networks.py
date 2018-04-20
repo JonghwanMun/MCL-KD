@@ -15,6 +15,7 @@ from src.model.virtual_VQA_network import VirtualVQANetwork
 from src.experiment import common_functions as cmf
 from src.utils import accumulator, utils, io_utils, vis_utils, net_utils
 
+
 class Ensemble(VirtualVQANetwork):
     def __init__(self, config):
         super(Ensemble, self).__init__(config) # Must call super __init__()
@@ -30,18 +31,28 @@ class Ensemble(VirtualVQANetwork):
             config["model"], "num_models", 5)
 
         # options if use knowledge distillation
-        self.use_knowledge_distillation = \
-            utils.get_value_from_dict(
+        self.use_knowledge_distillation = utils.get_value_from_dict(
                 config["model"], "use_knowledge_distillation", False)
-        self.use_initial_assignment = \
-            utils.get_value_from_dict(
+        self.use_initial_assignment = utils.get_value_from_dict(
                 config["model"], "use_initial_assignment", False)
-        base_model_ckpt_path = \
-                utils.get_value_from_dict(
+        base_model_ckpt_path = utils.get_value_from_dict(
                     config["model"], "base_model_ckpt_path", "None")
         if self.use_knowledge_distillation:
             assert base_model_ckpt_path != "None", \
                 "checkpoint path for base model should be given"
+
+        # options if use attention transfer
+        self.use_attention_transfer = utils.get_value_from_dict(
+                config["model"], "use_attention_transfer", False)
+
+        # options if use shared question embedding layer
+        self.use_shared_question_embedding = utils.get_value_from_dict(
+            config["model"], "use_shared_question_embedding", False)
+        base_qstemb_ckpt_path = utils.get_value_from_dict(
+                    config["model"], "base_qstemb_ckpt_path", "None")
+        if self.use_knowledge_distillation and self.use_shared_question_embedding:
+            assert base_qstemb_ckpt_path != "None", \
+                "checkpoint path for base question embedding net should be given"
 
         # options if use assignment model
         self.use_assignment_model = utils.get_value_from_dict(
@@ -49,8 +60,13 @@ class Ensemble(VirtualVQANetwork):
 
         # build base models if use
         if self.use_knowledge_distillation:
-            num_base_models = len(base_model_ckpt_path)
+            if self.use_shared_question_embedding:
+                self.base_qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
+                qstemb_state_dict = torch.load(base_qstemb_ckpt_path)
+                self.base_qst_emb_net.load_state_dict(qstemb_state_dict)
+
             self.base_model = []
+            num_base_models = len(base_model_ckpt_path)
             for i in range(num_base_models):
                 base_config = copy.deepcopy(config)
                 base_config["use_knowledge_distillation"] = False
@@ -73,6 +89,8 @@ class Ensemble(VirtualVQANetwork):
                 self.net_list[m].load_checkpoint(base_model_ckpt_path[m])
                 self.logger["train"].info("{}th net is initialized from {}".format( \
                         m, base_model_ckpt_path[m]))
+        if self.use_shared_question_embedding:
+            self.qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
         if self.use_assignment_model:
             self.assignment_model = \
                     building_blocks.AssignmentModel(config["model"])
@@ -85,6 +103,9 @@ class Ensemble(VirtualVQANetwork):
         # set models to update
         self.model_list = ["net_list", "criterion"]
         self.models_to_update = ["net_list", "criterion"]
+        if self.use_shared_question_embedding:
+            self.model_list.append("qst_emb_net")
+            self.models_to_update.append("qst_emb_net")
         if self.use_assignment_model:
             self.model_list.append("assignment_model")
             self.models_to_update.append("assignment_model")
@@ -105,10 +126,20 @@ class Ensemble(VirtualVQANetwork):
             criterion_inp: input list for criterion
         """
         # forward network
+        if self.use_shared_question_embedding:
+            qst_feats = self.qst_emb_net(data[1], data[2])
         self.logit_list = []
         ce_loss_list = []
+        if self.use_attention_transfer:
+            net_att_groups = []
+            base_net_att_groups = []
         for m in range(self.num_models):
-            ith_net_outputs = self.net_list[m](data)
+            if self.use_shared_question_embedding:
+                ith_net_outputs = self.net_list[m](data, qst_feats)
+            else:
+                ith_net_outputs = self.net_list[m](data)
+            if self.use_attention_transfer:
+                net_att_groups.append(ith_net_outputs[2])
             ith_net_loss = self.net_list[m].loss_fn(ith_net_outputs[0], data[-1])
             self.logit_list.append(ith_net_outputs[0])
             ce_loss_list.append(ith_net_loss)
@@ -125,10 +156,23 @@ class Ensemble(VirtualVQANetwork):
             criterion_inp[0].append(data[3])
 
         if self.use_knowledge_distillation:
+            if self.use_shared_question_embedding:
+                qst_feats = self.base_qst_emb_net(data[1], data[2])
             self.base_outs = []
             for i in range(len(self.base_model)):
-                self.base_outs.append(self.base_model[i].forward(data)[0]) # [logit, attention]
+                if self.use_shared_question_embedding:
+                    base_output = self.base_model[i].forward(data, qst_feats) # [logit, attention]
+                    self.base_outs.append(base_output[0])
+                else:
+                    base_output = self.base_model[i].forward(data) # [logit, attention]
+                    self.base_outs.append(base_output[0])
+                if self.use_attention_transfer:
+                    base_net_att_groups.append(base_output[2])
             criterion_inp[0].append(self.base_outs)
+
+        if self.use_attention_transfer:
+            criterion_inp[0].append(net_att_groups)
+            criterion_inp[0].append(base_net_att_groups)
 
         return criterion_inp
 
@@ -207,9 +251,16 @@ class Ensemble(VirtualVQANetwork):
                 # for SAN, we visualize attention weights
                 logit_list = []
                 loss_list = []
+
+                if self.use_shared_question_embedding:
+                    qst_feats = self.qst_emb_net(data[1], data[2])
                 for m in range(self.num_models):
-                    self.net_list[m].save_results(
-                        data, "{}_m{}-att".format(prefix, m+1), compute_loss=True)
+                    if self.use_shared_question_embedding:
+                        self.net_list[m].save_results(data, qst_feats,
+                            "{}_m{}-att".format(prefix, m+1), compute_loss=True)
+                    else:
+                        self.net_list[m].save_results(data,
+                            "{}_m{}-att".format(prefix, m+1), compute_loss=True)
                     logit_list.append(self.net_list[m].logits)
                     loss_list.append(self.net_list[m].loss)
 
@@ -244,10 +295,8 @@ class Ensemble(VirtualVQANetwork):
                 vis_data = [*self.sample_data, self.criterion.assignments]
                 if type(vis_data[0][-1]) == type(list()):
                     vis_data[0][-1] = vis_data[0][-1][0]
-                """
                 if self.use_knowledge_distillation:
                     vis_data.append([net_utils.get_data(bout) for bout in self.base_outs])
-                """
 
                 class_names = [self.itoa[str(key)] for key in range(len(self.itoa.keys()))]
                 vis_utils.save_mcl_visualization(
@@ -399,34 +448,31 @@ class Ensemble(VirtualVQANetwork):
     def compare_assignments(self):
         _, assignments = net_utils.get_data(self.assignment_logits).max(dim=1)
         print(torch.stack([self.criterion.assignments.squeeze(), assignments], dim=1))
-        print(torch.sum(torch.eq(self.criterion.assignments.squeeze(), assignments)), " - ", assignments.size(0))
+        print(torch.sum(torch.eq(self.criterion.assignments.squeeze(), assignments)), \
+              " - ", assignments.size(0))
 
     def save_checkpoint(self, cid):
         """ Save checkpoint of the network.
         Args:
-            cid: id of checkpoint
+            cid: id of checkpoint; e.g. epoch
         """
-        ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
-                "checkpoints", "checkpoint_epoch_{:03d}.pkl")
-        model_state_dict = {}
-        for m in self.model_list:
-            model_state_dict[m] = self[m].state_dict()
-        torch.save(model_state_dict, ckpt_path.format(cid))
-        self.logger["train"].info("Checkpoint is saved in {}".format(
-                ckpt_path.format(cid)))
+        super(Ensemble, self).save_checkpoint(cid)
 
         if self.config["model"]["save_all_net"]:
-            ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
-                "checkpoints", "M{}_epoch_{:03d}.pkl")
             for m in range(self.num_models):
-                torch.save(self.net_list[m].state_dict(),
-                           ckpt_path.format(m, cid))
-                self.logger["train"].info("M{} is saved in {}".format(
-                    m, ckpt_path.format(m, cid)))
+                self.net_list[m].save_checkpoint(cid, "M{}".format(m))
+
+            if self.use_shared_question_embedding:
+                ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
+                    "checkpoints", "qstemb_epoch_{:03d}.pkl")
+                torch.save(self.qst_emb_net.state_dict(), ckpt_path.format(cid))
+                self.logger["train"].info(
+                    "Shared question embedding net is saved in {}".format(
+                        ckpt_path.format(cid)))
 
             if self.config["model"]["use_assignment_model"]:
                 ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
-                "checkpoints", "assign_model_epoch_{:03d}.pkl")
+                    "checkpoints", "assign_model_epoch_{:03d}.pkl")
                 torch.save(self.assignment_model.state_dict(),
                            ckpt_path.format(cid))
                 self.logger["train"].info("Assignment model is saved in {}".format(
@@ -442,6 +488,8 @@ class Ensemble(VirtualVQANetwork):
             config = SAAA.model_specific_config_update(config)
         elif m_config["base_model_type"] == "san":
             config = SAN.model_specific_config_update(config)
+        elif m_config["base_model_type"] == "sharedsaaa":
+            config = SharedSAAA.model_specific_config_update(config)
         else:
             raise NotImplementedError("Base model type: {}".m_config["base_model_type"])
 
@@ -566,34 +614,13 @@ class SAAA(VirtualVQANetwork):
             utils.get_value_from_dict(
                 config["model"], "apply_l2_norm", True)
 
-        # options for KLD with base model
-        self.use_knowledge_distillation = \
-            utils.get_value_from_dict(config["model"],
-                    "learning_knowledge_distillation_loss", False)
-        base_model_ckpt_path = \
-                utils.get_value_from_dict(
-                    config["model"], "base_model_ckpt_path", "None")
-        if self.use_knowledge_distillation:
-            assert base_model_ckpt_path != "None", \
-                "checkpoint path for base model should be given"
-
         # build layers
         if self.use_deep_img_emb:
             self.img_emb_net = building_blocks.ResBlock2D(config["model"], "img_emb")
         self.qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
         self.saaa = building_blocks.RevisedStackedAttention(config["model"])
         self.classifier = building_blocks.MLP(config["model"], "answer")
-        if self.use_knowledge_distillation:
-            base_config = copy.deepcopy(config)
-            base_config["model"]["use_knowledge_distillation"] = False
-            self.base_model = SAAA(base_config)
-            self.base_model.load_checkpoint(base_model_ckpt_path)
-            if self.use_gpu and torch.cuda.is_available():
-                self.base_model.cuda()
-            self.base_model.eval()
-            self.criterion = building_blocks.KLDLoss(config)
-        else:
-            self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
+        self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
 
         # set layer names (all and to be updated)
         self.model_list = ["qst_emb_net", "saaa", "classifier", "criterion"]
@@ -619,7 +646,10 @@ class SAAA(VirtualVQANetwork):
             img_feats = img_feats \
                 / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
         if self.use_deep_img_emb:
-            img_feats = self.img_emb_net(img_feats)
+            img_emb_out = self.img_emb_net(img_feats)
+            img_feats = img_emb_out["feats"]
+            if self.use_attention_transfer:
+                att_groups = img_emb_out["att_groups"]
         qst_feats = self.qst_emb_net(data[1], data[2])
         saaa_outputs = self.saaa(qst_feats, img_feats) # [ctx, att list]
         # concatenate attended feature and question feat
@@ -627,12 +657,7 @@ class SAAA(VirtualVQANetwork):
         self.logits = self.classifier(multimodal_feats) # criterion input
 
         others = saaa_outputs[1]
-        if self.use_knowledge_distillation:
-            print("Update using KLD", end="\r")
-            teacher_logits = self.base_model.forward(data)[0]
-            criterion_inp = [self.logits, teacher_logits]
-        else:
-            criterion_inp = self.logits
+        criterion_inp = self.logits
         return [criterion_inp, others]
 
     def save_results(self, data, prefix, mode="train", compute_loss=False):
@@ -658,8 +683,128 @@ class SAAA(VirtualVQANetwork):
                 loss = self.loss_fn(logits, data[-2], count_loss=False)
 
             # visualize result
-            if self.use_knowledge_distillation:
-                logits = logits[0]
+            num_stacks = att_weights.size(1)
+            att_weights = att_weights.data.cpu()
+            qualitative_results = [[att_weights[:,i,:,:]
+                  for i in range(num_stacks)], logits.data.cpu()]
+            vis_utils.save_san_visualization(
+                self.config, self.sample_data, qualitative_results,
+                self.itow, self.itoa, prefix)
+
+    @classmethod
+    def model_specific_config_update(cls, config):
+        assert type(config) == type(dict()), \
+            "Configuration shuold be dictionary"
+
+        m_config = config["model"]
+        # for image embedding layer
+        if "img_emb_res_block_2d_out_dim" in m_config.keys():
+            m_config["img_emb_dim"] = m_config["img_emb_res_block_2d_out_dim"]
+        # for attention layer
+        m_config["qst_emb_dim"] = m_config["rnn_hidden_dim"]
+        # for classigication layer
+        m_config["answer_mlp_inp_dim"] = m_config["rnn_hidden_dim"] \
+                + (m_config["img_emb_dim"] * m_config["num_stacks"])
+        m_config["answer_mlp_out_dim"] = m_config["num_labels"]
+
+        return config
+
+class SharedSAAA(VirtualVQANetwork):
+    def __init__(self, config, verbose=True):
+        super(SharedSAAA, self).__init__(config, verbose) # Must call super __init__()
+
+        self.classname = "SharedSAAA"
+        self.use_gpu = utils.get_value_from_dict(
+            config["model"], "use_gpu", True)
+        loss_reduce = utils.get_value_from_dict(
+            config["model"], "loss_reduce", True)
+
+        # options for deep image embedding
+        self.use_deep_img_emb = utils.get_value_from_dict(
+            config["model"], "use_deep_img_embedding", False)
+        # options for applying l2-norm
+        self.apply_l2_norm = \
+            utils.get_value_from_dict(
+                config["model"], "apply_l2_norm", True)
+        # options if use attention transfer
+        self.use_attention_transfer = utils.get_value_from_dict(
+                config["model"], "use_attention_transfer", False)
+        if self.use_attention_transfer:
+            assert self.use_deep_img_emb, \
+                "If you use attention transfer, you also use deep image embedding layers"
+
+        # build layers
+        if self.use_deep_img_emb:
+            self.img_emb_net = building_blocks.ResBlock2D(config["model"], "img_emb")
+        self.saaa = building_blocks.RevisedStackedAttention(config["model"])
+        self.classifier = building_blocks.MLP(config["model"], "answer")
+        self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
+
+        # set layer names (all and to be updated)
+        self.model_list = ["saaa", "classifier", "criterion"]
+        self.models_to_update = ["saaa", "classifier", "criterion"]
+        if self.use_deep_img_emb:
+            self.model_list.append("img_emb_net")
+            self.models_to_update.append("img_emb_net")
+
+        self.config = config
+
+    def forward(self, data, qst_feats):
+        """ Forward network
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels]
+            qst_feats: question embedding features
+        Returns:
+            logits: logits of network which is an input of criterion
+            others: intermediate values (e.g. attention weights)
+        """
+        # forward network
+        # applying l2-norm for img features
+        img_feats = data[0]
+        if self.apply_l2_norm:
+            img_feats = img_feats \
+                / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
+        if self.use_deep_img_emb:
+            img_emb_out = self.img_emb_net(img_feats)
+            img_feats = img_emb_out["feats"]
+            if self.use_attention_transfer:
+                att_groups = img_emb_out["att_groups"]
+        saaa_outputs = self.saaa(qst_feats, img_feats) # [ctx, att list]
+        # concatenate attended feature and question feat
+        multimodal_feats = torch.cat((saaa_outputs[0], qst_feats), 1)
+        self.logits = self.classifier(multimodal_feats) # criterion input
+
+        others = saaa_outputs[1]
+        criterion_inp = self.logits
+        out = [criterion_inp, others]
+        if self.use_attention_transfer:
+            out.append(att_groups)
+        return out
+
+    def save_results(self, data, qst_feats, prefix, mode="train", compute_loss=False):
+        """ Get qualitative results (attention weights) and save them
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
+        """
+        # save predictions
+        self.save_predictions(prefix)
+        epoch = int(prefix.split("_")[-1])
+        self.visualize_confusion_matrix(epoch, prefix=mode)
+
+        if mode == "train":
+            # maintain sample data
+            self._set_sample_data(data)
+
+            # convert data as Variables
+            if self.is_main_net:
+                data = self.tensor2variable(data)
+            # forward network
+            outputs = self.forward(data, qst_feats)
+            logits, att_weights = outputs[0], outputs[1]
+            if compute_loss:
+                loss = self.loss_fn(logits, data[-2], count_loss=False)
+
+            # visualize result
             num_stacks = att_weights.size(1)
             att_weights = att_weights.data.cpu()
             qualitative_results = [[att_weights[:,i,:,:]
