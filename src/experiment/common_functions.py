@@ -117,6 +117,54 @@ def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verb
     net.print_counters_info(epoch+1, logger_name=logger_name, mode=mode)
     net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
 
+""" validate the network with temperature scaling """
+def evaluate_calibration(config, loader, net, epoch, T, logger_name="epoch", mode="Train", verbose_every=None):
+
+    if verbose_every == None:
+        verbose_every = config["evaluation"]["print_every"]
+    # load logger
+    if logger_name == "epoch":
+        logger = io_utils.get_logger("Train")
+    elif logger_name == "eval":
+        logger = io_utils.get_logger("Evaluate")
+    else:
+        raise NotImplementedError()
+
+    net.eval_mode() # set network as evalmode
+    net.reset_status() # reset status
+
+    """ Run validating network """
+    ii = 0
+    tm = timer.Timer()
+    for batch in loader:
+        data_load_duration = tm.get_duration()
+        # forward the network
+        tm.reset()
+        outputs = net.evaluate(batch)
+        run_duration = tm.get_duration()
+
+        # accumulate the number of correct answers
+        outputs[1][0][:] = [new_logit / T for new_logit in outputs[1][0]]
+        net.compute_status(outputs[1], batch[0][-1])
+
+        # print learning information
+        if ((verbose_every > 0) and ((ii+1) % verbose_every == 0)) \
+                or config["misc"]["debug"]:
+            net.print_status(epoch+1, ii+1, mode="eval")
+            txt = "[TEST] fetching for {:.3f}s, inference for {:.3f}s\n"
+            logger.debug(txt.format(data_load_duration, run_duration))
+
+        ii += 1
+        tm.reset()
+
+        if (config["misc"]["debug"]) and (ii > 5):
+            break
+        # end for batch in loader
+
+    net.metric = net.counters["top1-avg"].get_average() # would be used for tuning parameter
+    net.print_counters_info(epoch+1, logger_name=logger_name, mode=mode)
+    net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
+
 """ get assignment values for data """
 def reorder_assignments_using_qst_ids(origin_qst_ids, qst_ids, assignments, is_subset=False):
     # reordering assignments along with original data order
