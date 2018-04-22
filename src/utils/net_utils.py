@@ -112,6 +112,37 @@ def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin, reduce=False):
 
     return margin_loss
 
+def att_fn(logit):
+    """ return l2_norm( \sum_c|logit_c|^p ) where p=2
+    Args:
+        logit: logit from Convolution layer; [B, C, H, W]
+    """
+    B = logit.size(0)
+    return F.normalize(logit.pow(2).mean(1).view(B,-1)) # [B, h*w]
+
+def compute_attention_transfer_loss(student, teacher, beta, reduce=False):
+    """ Compute attention transfer loss with logit (or prob) for assigned model
+    Args:
+        student: list of activations from student network; l * [B,C,H,W]
+        teacher: list of activations from teacher network; l * [B,C,H,W]
+        beta: multiplier for attention transfer loss
+        reduce: applying average over batch
+    """
+    # check input correction
+    assert len(student) == len(teacher), \
+        "[AttentionTransferLoss] The number of layers " \
+        + "should be same for student and teacher"
+
+    at_loss_list = []
+    for s,t in zip(student, teacher):
+        at_loss_list.append((att_fn(s) - att_fn(t)).pow(2).mean(1)) # [B,]
+
+    if reduce:
+        at_loss_list = [atl.mean() for atl in at_loss_list]
+
+    return beta * sum(at_loss_list)
+
+
 """ DEPRECATED """
 def ___compute_logit_margin(logit_list, gt_idx, margin_threshold, reduce=False):
 

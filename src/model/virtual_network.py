@@ -25,6 +25,8 @@ class VirtualNetwork(nn.Module):
         self.counters = None
         self.status = None
         self.use_tf_summary = False
+        self.it = 0 # it: iteration
+        self.update_every = 1
 
         self._create_counters()
         self._get_loggers()
@@ -52,6 +54,14 @@ class VirtualNetwork(nn.Module):
         self.status["loss"] = net_utils.get_data(self.loss)[0]
         if count_loss:
             self.counters["loss"].add(self.status["loss"], 1)
+        """
+        TODO: consider using dictionary of multiple criterions for multiple losses
+        for crit_name,crit in self.criterions.items():
+            self.loss[crit_name] = crit(criterion_inp, gt)
+            self.status[crit_name] = net_utils.get_data(self.loss[crit_name])[0]
+            if count_loss:
+                self.counters[crit_name].add(self.status[crit_name], 1)
+        """
         return self.loss
 
     def update(self, loss, lr):
@@ -60,13 +70,19 @@ class VirtualNetwork(nn.Module):
             loss: loss to train the network
             lr: learning rate
         """
+
         if self.optimizer == None:
             self.optimizer = torch.optim.Adam(self.get_parameters(), lr=lr)
-        self.optimizer.zero_grad() # set gradients as zero before updating the network
+            self.optimizer.zero_grad() # set gradients as zero before updating the network
+
+        self.it +=1
+        loss = loss / self.update_every
         loss.backward()
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = lr
-        self.optimizer.step()
+        if self.it % self.update_every == 0:
+            self.optimizer.step()
+            self.optimizer.zero_grad() # set gradients as zero before updating the network
 
     def forward_update(self, batch, lr):
         """ Forward and update the network at the same time
@@ -86,7 +102,6 @@ class VirtualNetwork(nn.Module):
         # (e.g. logits), and remaining items would be intermediate values of network
         # that you want to show or check
         outputs = self.forward(data)
-        # TODO: consider using dictionary for multiple losses
         loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
         self.update(loss, lr)
         return [loss, *outputs]

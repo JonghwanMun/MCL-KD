@@ -301,8 +301,8 @@ class Ensemble(VirtualVQANetwork):
                 class_names = [self.itoa[str(key)] for key in range(len(self.itoa.keys()))]
                 vis_utils.save_mcl_visualization(
                     self.config, vis_data, logits, class_names, \
-                    self.itow, self.itoa, prefix#, \
-                    #self.use_knowledge_distillation, self.use_initial_assignment \
+                    self.itow, self.itoa, prefix, \
+                    self.use_knowledge_distillation, self.use_initial_assignment \
                 )
 
 
