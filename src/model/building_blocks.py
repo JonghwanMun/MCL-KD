@@ -658,7 +658,8 @@ class EnsembleLoss(nn.Module):
         self.use_attention_transfer = utils.get_value_from_dict(
                 config, "use_attention_transfer", False)
         if self.use_attention_transfer:
-            self.at_criterion = AttentionTransferLoss(config)
+            self.att_transfer_beta = utils.get_value_from_dict(
+                config, "att_transfer_beta", 1000)
 
         # options for assignment model
         self.use_assignment_model = utils.get_value_from_dict(
@@ -729,7 +730,7 @@ class EnsembleLoss(nn.Module):
                     logits = [(F.softmax(logit, dim=1) + 1e-5).log_() \
                               for logit in logit_list]
 
-                nonspecialist_loss_list = [net_utils.compute_margin_loss(
+                nonspecialist_loss_list = [self.beta * net_utils.compute_margin_loss(
                     logits, labels, mi, self.margin_threshold, reduce=False) \
                     for mi in range(self.m)]
 
@@ -737,25 +738,61 @@ class EnsembleLoss(nn.Module):
                 oracle_loss_list = []
                 for mi in range(self.m):
                     oracle_loss_list.append(task_loss_list[mi] \
-                        + self.beta*nonspecialist_loss_list[mi])
+                        + nonspecialist_loss_list[mi])
 
                 # for printing status
                 txt = "margin-MCL CE {} | margin {} | ORACLE {} "
 
-            elif self.version == "KD-MCL":
-                # compute KL divergence with teacher distribution for each model
-                nonspecialist_loss_list = self.compute_kld(logit_list, inp[-1])
+            elif self.version == "Attention-Transfer":
+
+                # compute attention transfer loss
+                at_loss_list = []
+                student_groups = inp[-2] # m*[groups]; groups: l*[activations]
+                teacher_groups = inp[-1] # m*[groups]
+                at_loss_list = [
+                    net_utils.compute_attention_transfer_loss(s, t, self.att_transfer_beta) \
+                    for s,t in zip(student_groups, teacher_groups)
+                ]
+
+                # compute KLD with uniform distribution
+                prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
+                             for logit in logit_list] # m*[B,C]
+                kld_uniform_list= [self.beta*(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
+                                   for prob in prob_list] # m*[B]
+
+                nonspecialist_loss_list = [at_loss_list[i]+kld_uniform_list[i] \
+                                           for i in range(self.m)]
 
                 # compute oracle loss
                 oracle_loss_list = []
                 for mi in range(self.m):
                     if (mi+1) != self.m:
                         oracle_loss_list.append( task_loss_list[mi] \
-                                + self.beta * (sum(nonspecialist_loss_list[:mi]) \
+                                + ( sum(nonspecialist_loss_list[:mi]) \
+                                + sum(nonspecialist_loss_list[mi+1:]) )) # m*[B]
+                    else:
+                        oracle_loss_list.append(task_loss_list[mi] \
+                                + sum(nonspecialist_loss_list[:mi])) # m*[B]
+
+                txt = "AT CE {} | NON {} | ORACLE {} "
+                txt += ("AT {} ".format("/".join("{:6.3f}".format(
+                        atl[0].data[0]) for atl in at_loss_list)))
+
+            elif self.version == "KD-MCL":
+                # compute KL divergence with teacher distribution for each model
+                nonspecialist_loss_list = self.compute_kld(logit_list, inp[-1])
+                nonspecialist_loss_list = [self.beta * nsl for nsl in nonspecialist_loss_list]
+
+                # compute oracle loss
+                oracle_loss_list = []
+                for mi in range(self.m):
+                    if (mi+1) != self.m:
+                        oracle_loss_list.append( task_loss_list[mi] \
+                                + (sum(nonspecialist_loss_list[:mi]) \
                                 + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
                     else:
                         oracle_loss_list.append(task_loss_list[mi] \
-                                + self.beta * sum(nonspecialist_loss_list[:mi])) # m*[B]
+                                + sum(nonspecialist_loss_list[:mi])) # m*[B]
 
                 # for printing status
                 txt = "KD-MCL CE {} | KLD {} | ORACLE {} "
@@ -764,17 +801,18 @@ class EnsembleLoss(nn.Module):
                 # compute KL divergence with Uniform distribution for each model
                 prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
                              for logit in logit_list] # m*[B,C]
-                nonspecialist_loss_list = [(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
-                                for prob in prob_list] # m*[B]
+                nonspecialist_loss_list = [
+                    self.beta * (-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
+                    for prob in prob_list] # m*[B]
                 oracle_loss_list = []
                 for mi in range(self.m):
                     if (mi+1) != self.m:
                         oracle_loss_list.append( task_loss_list[mi] \
-                            + self.beta*(sum(nonspecialist_loss_list[:mi])\
+                            + (sum(nonspecialist_loss_list[:mi])\
                                 + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
                     else:
                         oracle_loss_list.append(task_loss_list[mi] \
-                                + self.beta*sum(nonspecialist_loss_list[:mi])) # m*[B]
+                                + sum(nonspecialist_loss_list[:mi])) # m*[B]
 
                 # for printing status
                 txt = self.version + " CE {} | ENT {} | ORACLE {} "
@@ -824,19 +862,17 @@ class EnsembleLoss(nn.Module):
                     coeff = net_utils.where(finally_selected, one_mask, beta_mask)
                     loss = coeff * F.cross_entropy(logit_list[mi], sampled_labels, reduce=False)
                     if mi == 0:
-                        #total_loss = (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
-                        #total_loss = (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
-                        total_loss = loss.sum() / self.m / B
+                        total_loss = loss.sum() / self.k / B
                     else:
-                        #total_loss += (loss.sum()) / self.m / B / self.k # 2017.3.20 11:13 pm
-                        #total_loss += (loss.sum()) / B / self.k # 2017.3.22 08:16 pm
-                        total_loss += (loss.sum() / self.m / B)
+                        total_loss += (loss.sum() / self.k / B)
                 # end of CMCL v1
+
             else:
                 zero_mask = Variable(
                     torch.from_numpy(np.zeros(B)).float(), requires_grad=False) # [B]
                 if self.use_gpu and torch.cuda.is_available():
                     zero_mask = zero_mask.cuda()
+
                 total_loss = 0
                 for mi in range(self.m):
                     for topk in range(self.k):
@@ -845,11 +881,10 @@ class EnsembleLoss(nn.Module):
                             selected_mask = selected_mask.cuda()
 
                         cur_loss = net_utils.where(selected_mask,
-                                task_loss_list[mi] - self.beta*nonspecialist_loss_list[mi],
+                                task_loss_list[mi] - nonspecialist_loss_list[mi],
                                 zero_mask)
                         total_loss += cur_loss.sum()
-                total_loss += (self.beta*sum(nonspecialist_loss_list[:])).sum()
-                #total_loss = total_loss / self.m / B / self.k
+                total_loss += (sum(nonspecialist_loss_list[:])).sum()
                 total_loss = total_loss / B / self.k
                 # End
 
@@ -863,7 +898,7 @@ class EnsembleLoss(nn.Module):
             print(txt, end="")
             if (self.iteration % (100)) == 0:
                 log_txt += txt
-            # end for computing oracle loss
+            # end of computig oracle loss with assignments
 
         if self.use_ensemble_loss:
             logits = torch.stack(logit_list, 0).mean(dim=0)
@@ -888,16 +923,6 @@ class EnsembleLoss(nn.Module):
             total_loss += self.assignment_loss
         else:
             self.assignment_loss = None
-
-        if self.use_attention_transfer:
-            student_groups = inp[-2] # m*[groups]
-            teacher_groups = inp[-1] # m*[groups]
-            at_loss = self.at_criterion([student_groups, teacher_groups], labels)
-            total_loss += at_loss
-            txt = " AT {:.3f} ".format(at_loss.data[0])
-            print(txt, end="")
-            if (self.iteration % (100)) == 0:
-                log_txt += txt
 
         if self.version != "IE":
             txt = "|".join("{:03d}".format(

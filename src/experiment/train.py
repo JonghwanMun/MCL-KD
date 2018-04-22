@@ -91,7 +91,7 @@ def train(config):
 
             # maintain sample data to observe learning status
             if ii == 0:
-                sample_data = dsets["train"].get_samples(10)
+                sample_data = dsets["train"].get_samples(5)
                 """ TODO: get samples from both training/test set
                 test_sample_data = dsets["test"].get_samples(5))
                 """

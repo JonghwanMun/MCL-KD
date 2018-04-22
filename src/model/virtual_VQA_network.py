@@ -22,6 +22,8 @@ class VirtualVQANetwork(VirtualNetwork):
         # update options compatible for a specific VQA model
         config = self.model_specific_config_update(config)
         self.num_models = 1 # defaultly assumming one model
+        self.update_every = utils.get_value_from_dict(
+            config["misc"], "update_every", 1)
 
         # save configuration for later network reproduction
         save_config_path = os.path.join(
