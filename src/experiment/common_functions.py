@@ -8,6 +8,7 @@ import logging
 import numpy as np
 from tqdm import tqdm
 from datetime import datetime
+from collections import OrderedDict
 
 from src.dataset import clevr_dataset, vqa_dataset
 from src.model import building_blocks, building_networks
@@ -23,6 +24,8 @@ def get_model(base_model_type):
         M = getattr(building_networks, "SharedSAAA")
     elif base_model_type in ["ensemble", "ENSEMBLE"]:
         M = getattr(building_networks, "Ensemble")
+    elif base_model_type in ["infer", "INFER"]:
+        M = getattr(building_networks, "EnsembleInference")
     else:
         raise NotImplementedError("Not supported model type ({})".format(base_model_type))
     return M
@@ -118,7 +121,8 @@ def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verb
     net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
 
 """ validate the network with temperature scaling """
-def evaluate_calibration(config, loader, net, epoch, T, logger_name="epoch", mode="Train", verbose_every=None):
+#def evaluate_calibration(config, loader, net, epoch, TT, logger_name="epoch", mode="Train", verbose_every=None):
+def evaluate_calibration(config, loader, net, epoch, logger_name="epoch", mode="Train", verbose_every=None):
 
     if verbose_every == None:
         verbose_every = config["evaluation"]["print_every"]
@@ -133,6 +137,16 @@ def evaluate_calibration(config, loader, net, epoch, T, logger_name="epoch", mod
     net.eval_mode() # set network as evalmode
     net.reset_status() # reset status
 
+    # initialize counters for different tau
+    metrics = ["top1-avg", "top1-max", "oracle"]
+    tau = [1.0, 1.2, 1.5, 2.0, 5.0, 10.0, 50.0, 100.0]
+    counters = OrderedDict()
+    for T in tau:
+        tau_name = "tau-"+str(T)
+        counters[tau_name] = OrderedDict()
+        for mt in metrics:
+            counters[tau_name][mt] = accumulator.Accumulator(mt)
+
     """ Run validating network """
     ii = 0
     tm = timer.Timer()
@@ -143,9 +157,16 @@ def evaluate_calibration(config, loader, net, epoch, T, logger_name="epoch", mod
         outputs = net.evaluate(batch)
         run_duration = tm.get_duration()
 
+        B = batch[0][-1].size()[0]
         # accumulate the number of correct answers
-        outputs[1][0][:] = [new_logit / T for new_logit in outputs[1][0]]
-        net.compute_status(outputs[1], batch[0][-1])
+        for T in tau:
+            #outputs[1][0][:] = [new_logit / T for new_logit in outputs[1][0]]
+            new_output = [[new_logit / T for new_logit in outputs[1][0]]]
+            net.compute_status(new_output, batch[0][-1])
+
+            tau_name = "tau-"+str(T)
+            for mt in metrics:
+                counters[tau_name][mt].add(net.status[mt]*B, B)
 
         # print learning information
         if ((verbose_every > 0) and ((ii+1) % verbose_every == 0)) \
@@ -161,9 +182,17 @@ def evaluate_calibration(config, loader, net, epoch, T, logger_name="epoch", mod
             break
         # end for batch in loader
 
+    for cnt_k,cnt_v in counters.items():
+        txt = cnt_k + " "
+        for k,v in cnt_v.items():
+            txt += ", {} = {:.3f}".format(v.get_name(), v.get_average())
+        print(txt)
+
+    """
     net.metric = net.counters["top1-avg"].get_average() # would be used for tuning parameter
     net.print_counters_info(epoch+1, logger_name=logger_name, mode=mode)
     net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
+    """
 
 """ get assignment values for data """
 def reorder_assignments_using_qst_ids(origin_qst_ids, qst_ids, assignments, is_subset=False):

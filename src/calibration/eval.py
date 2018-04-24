@@ -6,6 +6,7 @@ import logging
 import argparse
 import numpy as np
 from datetime import datetime
+from collections import OrderedDict
 
 import torch
 import torch.utils.data as data
@@ -61,6 +62,14 @@ def main(params):
                         shuffle=False, collate_fn=dataset.collate_fn)
 
     if params["mode"] == "eval":
+        metrics = ["top1-avg", "top1-max", "oracle"]
+        tau = [1.0, 1.2, 1.5, 2.0, 5.0, 10.0, 50.0, 100.0]
+        counters = OrderedDict()
+        for t in tau:
+            tau_name = "tau-"+str(tau)
+            counters[tau_name] = OrderedDict()
+            for mt in metrics:
+                counters[tau_name][mt] = accumulator.Accumulator(mt)
 
         """ Evaluating networks """
         e0 = params["start_epoch"]
@@ -85,7 +94,9 @@ def main(params):
             if (apply_cc_after > 0) and (epoch >= apply_cc_after):
                 net.apply_curriculum_learning()
 
-            cmf.evaluate_calibration(config, L, net, epoch-1, params["temperature"], logger_name="eval", mode="Evaluation", verbose_every=100)
+            cmf.evaluate_calibration(config, L, net, epoch-1,
+                                     logger_name="eval", mode="Evaluation", verbose_every=100)
+            #cmf.evaluate_calibration(config, L, net, epoch-1, params["temperature"], logger_name="eval", mode="Evaluation", verbose_every=100)
             net.save_results(sample_data, "epoch_{:03d}".format(epoch))
     elif params["mode"] == "selection":
         epoch = params["start_epoch"]

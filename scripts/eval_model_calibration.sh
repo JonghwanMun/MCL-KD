@@ -11,4 +11,4 @@ CUDA_VISIBLE_DEVICES=$4 python -m src.calibration.eval \
 	--end_epoch $6 \
 	--epoch_stride $7 \
 	--num_workers $8 \
-    --temperature $9
+    #--temperature $9

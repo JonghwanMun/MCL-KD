@@ -216,7 +216,7 @@ class VirtualVQANetwork(VirtualNetwork):
                 self.prob_list = [F.softmax(logit, dim=1) for logit in logits]
         else:
             assert self.num_models == 1, "The number of base network should be 1"
-            if self.probs == None:
+            if type(self.probs) == type(None):
                 self.prob_list = [F.softmax(logits, dim=1)]
             else:
                 self.prob_list = [self.probs]
@@ -252,7 +252,7 @@ class VirtualVQANetwork(VirtualNetwork):
             if self.use_knowledge_distillation:
                 logits = logits[0]
             B = logits.size(0)
-            if self.probs == None:
+            if type(self.probs) == type(None):
                 self.probs = F.softmax(logits, dim=1)
 
         # count the number of correct predictions

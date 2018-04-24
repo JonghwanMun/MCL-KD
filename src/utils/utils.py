@@ -86,3 +86,4 @@ def adjust_lr(iter, iter_per_epoch, config):
             config["decay_factor"]) / iter_per_epoch \
             / config["decay_every_epoch"])**iter
     return decay_lr
+

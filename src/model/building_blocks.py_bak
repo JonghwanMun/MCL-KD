@@ -2,6 +2,7 @@ import pdb
 import numpy as np
 from random import shuffle
 from collections import OrderedDict
+from itertools import combinations
 
 import torch
 import torch.nn as nn
@@ -687,7 +688,7 @@ class EnsembleLoss(nn.Module):
         task_loss_list = inp[1]
         task_loss_tensor = torch.stack(task_loss_list, dim=0) # [m,B]
         assert (task_loss_tensor.dim() == 2) and (task_loss_tensor.size(1) == B), \
-                "Loss of base network should not be reduced over batch (m, B)"
+                "Loss of base network should not be reduced (m, B)"
 
         log_txt = ""
         self.assignments = None
@@ -719,9 +720,8 @@ class EnsembleLoss(nn.Module):
 
         else:
             if self.version == "margin-MCL":
-                """ similar to CMCL, but just letting the differnce over
-                    the probability at GT higher than margin instead of
-                    producing uniform distribution
+                """ similar to CMCL, but just letting the margin over the probability at GT
+                    within a threshold instead of producing uniform distribution
                 """
 
                 # compute margins
@@ -731,11 +731,15 @@ class EnsembleLoss(nn.Module):
                     logits = [(F.softmax(logit, dim=1) + 1e-5).log_() \
                               for logit in logit_list]
 
-                # list of list; m * [m]
-                nonspecialist_loss_list = [net_utils.compute_margin_loss(
-                        logits, labels, mi, self.margin_threshold, \
-                        self.beta, reduce=False) \
-                        for mi in range(self.m)]
+                nonspecialist_loss_list = [self.beta * net_utils.compute_margin_loss(
+                    logits, labels, mi, self.margin_threshold, reduce=False) \
+                    for mi in range(self.m)]
+
+                # compute oracle loss
+                oracle_loss_list = []
+                for mi in range(self.m):
+                    oracle_loss_list.append(task_loss_list[mi] \
+                        + nonspecialist_loss_list[mi])
 
                 # for printing status
                 txt = "margin-MCL CE {} | margin {} | ORACLE {} "
@@ -760,6 +764,17 @@ class EnsembleLoss(nn.Module):
                 nonspecialist_loss_list = [at_loss_list[i]+kld_uniform_list[i] \
                                            for i in range(self.m)]
 
+                # compute oracle loss
+                oracle_loss_list = []
+                for mi in range(self.m):
+                    if (mi+1) != self.m:
+                        oracle_loss_list.append( task_loss_list[mi] \
+                                + ( sum(nonspecialist_loss_list[:mi]) \
+                                + sum(nonspecialist_loss_list[mi+1:]) )) # m*[B]
+                    else:
+                        oracle_loss_list.append(task_loss_list[mi] \
+                                + sum(nonspecialist_loss_list[:mi])) # m*[B]
+
                 txt = "AT CE {} | NON {} | ORACLE {} "
                 txt += ("AT {} ".format("/".join("{:6.3f}".format(
                         atl[0].data[0]) for atl in at_loss_list)))
@@ -768,6 +783,17 @@ class EnsembleLoss(nn.Module):
                 # compute KL divergence with teacher distribution for each model
                 nonspecialist_loss_list = self.compute_kld(logit_list, inp[-1])
                 nonspecialist_loss_list = [self.beta * nsl for nsl in nonspecialist_loss_list]
+
+                # compute oracle loss
+                oracle_loss_list = []
+                for mi in range(self.m):
+                    if (mi+1) != self.m:
+                        oracle_loss_list.append( task_loss_list[mi] \
+                                + (sum(nonspecialist_loss_list[:mi]) \
+                                + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
+                    else:
+                        oracle_loss_list.append(task_loss_list[mi] \
+                                + sum(nonspecialist_loss_list[:mi])) # m*[B]
 
                 # for printing status
                 txt = "KD-MCL CE {} | KLD {} | ORACLE {} "
@@ -779,43 +805,45 @@ class EnsembleLoss(nn.Module):
                 nonspecialist_loss_list = [
                     self.beta * (-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
                     for prob in prob_list] # m*[B]
+                oracle_loss_list = []
+                for mi in range(self.m):
+                    if (mi+1) != self.m:
+                        oracle_loss_list.append( task_loss_list[mi] \
+                            + (sum(nonspecialist_loss_list[:mi])\
+                                + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
+                    else:
+                        oracle_loss_list.append(task_loss_list[mi] \
+                                + sum(nonspecialist_loss_list[:mi])) # m*[B]
 
                 # for printing status
                 txt = self.version + " CE {} | ENT {} | ORACLE {} "
             else:
                 raise NotImplementedError("Not supported version of ensemble loss (%s)" % self.version)
 
-            # compute oracle loss for all possible combinations given overlap k
-            assign_idx, not_assign_idx = net_utils.get_combinations(self.m, self.k)
+            # get assignment with best oracle loss
+            assign_idx, not_assign_idx = utils.get_assignment_combinations(self.m, self.k)
             oracle_loss_list = []
             num_combinations = len(assign_idx)
-            if self.version == "margin-MCL":
-                for nc in range(num_combinations):
-                    specialized = []
-                    non_specialized = []
-                    for aidx in assign_idx[nc]:
-                        specialized.append(task_loss_list[aidx])
-                        non_specialized.extend([nonspecialist_loss_list[aidx][nidx] \
-                                                for nidx in not_assign_idx[nc]])
-                    oracle_loss_list.append(sum(specialized) + sum(non_specialized))
-            else:
-                for nc in range(num_combinations):
-                    specialized = [task_loss_list[idx] for idx in assign_idx[nc]]
-                    non_specialized = [nonspecialist_loss_list[idx] for idx in not_assign_idx[nc]]
-                    oracle_loss_list.append(sum(specialized) + sum(non_specialized))
+            for nc in len(num_combinations):
+                specialized = [task_loss_list[idx] for idx in assign_idx[nc]]
+                non_specialized = [nonspecialist_loss_list[idx] for idx in not_assign_idx[nc]]
+                oracle_loss_list.append(sum(sepcialized) + sum(non_specialized))
 
-            # select best assignment
+
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [nc,B]
             min_val, min_idx = oracle_loss_tensor.t().min(dim=1) # [B,]
-            min_idx = net_utils.get_assignment4batch(
-                    assign_idx, net_utils.get_data(min_idx)).t() # [B,k]
-            if self.use_gpu and torch.cuda.is_available():
-                min_idx = min_idx.cuda()
-            self.assignments = net_utils.get_data(min_idx.t())
+            total_loss = min_val.sum() / B
+            """
+            min_val, min_idx = oracle_loss_tensor.t().topk(
+                    self.k, dim=1, largest=False) # [B,k]
+            self.assignments = net_utils.get_data(min_idx) # [B,k]
+            min_idx = min_idx.t() # [k,B]
+            """
 
-            # compute final oracle loss for each data with the best assignment
+            nonspecialist_loss_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
+
+            # compute loss with assignments
             if self.version == "CMCL_v1":
-
                 # sampling labels stochastically
                 np_random_labels = np.random.randint(0, self.num_labels, size=(self.m, B))
                 random_labels = Variable(
@@ -854,20 +882,33 @@ class EnsembleLoss(nn.Module):
                 # end of CMCL v1
 
             else:
-                total_loss = min_val.sum() / B
+                zero_mask = Variable(
+                    torch.from_numpy(np.zeros(B)).float(), requires_grad=False) # [B]
+                if self.use_gpu and torch.cuda.is_available():
+                    zero_mask = zero_mask.cuda()
+
+                total_loss = 0
+                for mi in range(self.m):
+                    for topk in range(self.k):
+                        selected_mask = min_idx[topk].eq(mi).float() # [B]
+                        if self.use_gpu and torch.cuda.is_available():
+                            selected_mask = selected_mask.cuda()
+
+                        cur_loss = net_utils.where(selected_mask,
+                                task_loss_list[mi] - nonspecialist_loss_list[mi],
+                                zero_mask)
+                        total_loss += cur_loss.sum()
+                total_loss += (sum(nonspecialist_loss_list[:])).sum()
+                total_loss = total_loss / B / self.k
                 # End
 
-            if type(nonspecialist_loss_list[0]) == type(list()):
-                nonspecialist_loss_list = [sum(nonspecialist_loss_list[i]) for i in range(self.m)]
-            nonspecialist_loss_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
             txt = txt.format( \
                 "/".join("{:.3f}".format(
                     task_loss_tensor[i,0].data[0]) for i in range(self.m)),
                 "/".join("{:6.3f}".format(
                     nonspecialist_loss_tensor[i,0].data[0]) for i in range(self.m)),
                 "/".join("{:6.3f}".format(
-                    oracle_loss_tensor[i,0].data[0]) for i in range(self.m))
-                )
+                    oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
             print(txt, end="")
             if (self.iteration % (100)) == 0:
                 log_txt += txt
@@ -898,12 +939,9 @@ class EnsembleLoss(nn.Module):
             self.assignment_loss = None
 
         if self.version != "IE":
-            assign_num = []
-            for i in range(self.m):
-                cur_num = [min_idx[k].eq(i).sum().data[0] for k in range(self.k)]
-                assign_num.append(sum(cur_num))
-            txt = "|".join("{:03d}".format(assign_num[i]) for i in range(self.m)
-            )
+            txt = "|".join("{:03d}".format(
+                min_idx[0].eq(i).sum().data[0])
+                for i in range(self.m))
             print(txt, end="\r")
             if (self.iteration % (100)) == 0:
                 self.logger.info(log_txt + txt)

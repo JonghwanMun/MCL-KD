@@ -22,5 +22,6 @@ src/experiment/options
 # misc files/directories
 .gitignore
 results/
+tensorboard/
 logs/
 src/analysis

@@ -1,6 +1,7 @@
 import os
 import pdb
 import numpy as np
+from itertools import combinations
 
 import torch
 import torch.nn as nn
@@ -63,7 +64,7 @@ def compute_kl_div(inputs, targets, tau=-1, \
 
     return kld_loss
 
-def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin, reduce=False):
+def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin, beta, reduce=False):
     """ Compute margin loss with logit (or prob) for assigned model
     Args:
         logit_list: list of logits (or prob); m * [B, num_answrs]
@@ -83,32 +84,30 @@ def compute_margin_loss(logit_list, gt_idx, assigned_idx, margin, reduce=False):
     B = logit_list[0].size(0)
     gt_logit = logit_list[assigned_idx].gather(1, gt_idx.view(B,1)).squeeze() # [B,]
 
-    margin_loss = 0
+    margin_loss = []
     num_models = len(logit_list)
     for mi in range(num_models):
         if mi == assigned_idx:
-            continue
+            margin_loss.append(0) # we will not access this value
         else:
             """
             # compute maximum logit for other models: max(P_m_{others}(y|x))
             # accept that y at maximum logit can be ground-truth
             max_logit, max_idx = logit_list[mi].topk(2, dim=1) # [B, 2]
             max_in_gt = max_idx[:,0].eq(gt_idx).float()
-            dist = net_utils.where(max_in_gt,
+            diff = net_utils.where(max_in_gt,
                     gt_logit - max_logit[:,1], gt_logit - max_logit[:,0])
             """
-            # anyway put margin whether y at maximum logit is a ground-truth
-            # label
+            # anyway, difference will be bigger than margin
+            # whether y at maximum logit is a ground-truth label or not
             max_logit, _ = logit_list[mi].max(dim=1) # [B,]
-            dist = gt_logit - max_logit
-            #dist = gt_logit.log_() - max_logit.log_()
+            diff = gt_logit - max_logit
 
             # add margin loss for model_mi
-            cur_loss = (margin - dist).clamp(min=0.0)#.pow(2)
-            margin_loss += cur_loss
-
-    if reduce:
-        margin_loss = margin_loss.mean()
+            cur_loss = (margin - diff).clamp(min=0.0)#.pow(2)
+            if reduce:
+                cur_loss = cur_loss.mean()
+            margin_loss.append(beta * cur_loss)
 
     return margin_loss
 
@@ -141,6 +140,38 @@ def compute_attention_transfer_loss(student, teacher, beta, reduce=False):
         at_loss_list = [atl.mean() for atl in at_loss_list]
 
     return beta * sum(at_loss_list)
+
+def get_combinations(n, k):
+    """ Return non-overlapped two sets using combinations of nCk
+        e.g.
+        n=3, k=1 --> return [(0), (1), (2)], [(1,2), (0,2), (1,2)]]
+        n=3, k=2 --> return [(0,1), (0,2), (1,2)], [(2), (1), (0)]]
+    """
+    model_idx = set(np.arange(n))
+    assigns = list(combinations(model_idx, k))
+    not_assigns = []
+    for cbn in assigns:
+        not_assigns.append(model_idx - set(cbn))
+        assert model_idx == (set.union(set(cbn), not_assigns[-1])), \
+            print("Union of assign and not-assign shoud be same with model_idx")
+
+    return assigns, not_assigns
+
+def get_assignment4batch(assigns, idx):
+    """ Return assignments for each data
+    Args:
+        assigns: pre-defined assignment set; nc*[k]
+        idx: index for assignment; [B]
+    Returns:
+        batch_assigns: assignments for batch; [B, k]
+    """
+
+    batch_assigns = []
+    for i in idx:
+        batch_assigns.append(np.asarray(assigns[i]))
+
+    return Variable(torch.from_numpy(np.vstack(batch_assigns))).long()
+
 
 
 """ DEPRECATED """
