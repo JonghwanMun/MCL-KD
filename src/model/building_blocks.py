@@ -639,6 +639,12 @@ class EnsembleLoss(nn.Module):
         self.num_labels = utils.get_value_from_dict(config, "num_labels", 28)
         self.use_initial_assignment = \
                 utils.get_value_from_dict(config, "use_initial_assignment", False)
+        self.use_flexible_assignment = \
+                utils.get_value_from_dict(config, "use_flexible_assignment", False)
+        self.oracle_with_all_k = \
+                utils.get_value_from_dict(config, "oracle_with_all_k", False)
+        self.assignment_with_only_task_loss = \
+                utils.get_value_from_dict(config, "assignment_with_only_task_loss", False)
 
         # options for KD-MCL
         self.use_KD_loss_with_ensemble = utils.get_value_from_dict(
@@ -785,30 +791,49 @@ class EnsembleLoss(nn.Module):
             else:
                 raise NotImplementedError("Not supported version of ensemble loss (%s)" % self.version)
 
-            # compute oracle loss for all possible combinations given overlap k
-            assign_idx, not_assign_idx = net_utils.get_combinations(self.m, self.k)
+            """ Compute oracle loss and selecte the best assignment """
+            if self.oracle_with_all_k:
+                # inspect all possible combinations with different number of overlap
+                assign_idx, not_assign_idx = [], []
+                for mi in range(self.m):
+                    mi_assign_idx, mi_not_assign_idx = net_utils.get_combinations(self.m, mi+1)
+                    assign_idx.extend(mi_assign_idx)
+                    not_assign_idx.extend(mi_not_assign_idx)
+            else:
+                # compute oracle loss for all possible combinations given overlap k
+                assign_idx, not_assign_idx = net_utils.get_combinations(self.m, self.k)
+
             oracle_loss_list = []
             num_combinations = len(assign_idx)
-            if self.version == "margin-MCL":
-                for nc in range(num_combinations):
-                    specialized = []
-                    non_specialized = []
-                    for aidx in assign_idx[nc]:
-                        specialized.append(task_loss_list[aidx])
-                        non_specialized.extend([nonspecialist_loss_list[aidx][nidx] \
-                                                for nidx in not_assign_idx[nc]])
-                    oracle_loss_list.append(sum(specialized) + sum(non_specialized))
-            else:
+            if self.assignment_with_only_task_loss:
+                # here, we compute assignment with only task-loss (e.g. vqa loss).
+                # that is, we obtain assignment as in MCL.
+                # but, we also update not assigned models with non-specialized loss
+                # using the assignment later
                 for nc in range(num_combinations):
                     specialized = [task_loss_list[idx] for idx in assign_idx[nc]]
-                    non_specialized = [nonspecialist_loss_list[idx] for idx in not_assign_idx[nc]]
-                    oracle_loss_list.append(sum(specialized) + sum(non_specialized))
+                    oracle_loss_list.append(sum(specialized))
+            else:
+                if self.version == "margin-MCL":
+                    for nc in range(num_combinations):
+                        specialized = []
+                        non_specialized = []
+                        for aidx in assign_idx[nc]:
+                            specialized.append(task_loss_list[aidx])
+                            non_specialized.extend([nonspecialist_loss_list[aidx][nidx] \
+                                                    for nidx in not_assign_idx[nc]])
+                        oracle_loss_list.append(sum(specialized) + sum(non_specialized))
+                else:
+                    for nc in range(num_combinations):
+                        specialized = [task_loss_list[idx] for idx in assign_idx[nc]]
+                        non_specialized = [nonspecialist_loss_list[idx] for idx in not_assign_idx[nc]]
+                        oracle_loss_list.append(sum(specialized) + sum(non_specialized))
 
             # select best assignment
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [nc,B]
             min_val, min_idx = oracle_loss_tensor.t().min(dim=1) # [B,]
             min_idx = net_utils.get_assignment4batch(
-                    assign_idx, net_utils.get_data(min_idx)).t() # [B,k]
+                    assign_idx, net_utils.get_data(min_idx)) # [max_k,B]
             if self.use_gpu and torch.cuda.is_available():
                 min_idx = min_idx.cuda()
             self.assignments = net_utils.get_data(min_idx.t())
@@ -831,20 +856,24 @@ class EnsembleLoss(nn.Module):
                     beta_mask = beta_mask.cuda()
 
                 # compute loss
+                max_k = min_idx.size()[0]
                 for mi in range(self.m):
-                    for topk in range(self.k):
+                    for topk in range(max_k):
+                        null_mask = min_idx[topk].eq(-1).long() # [B]
+                        if null_mask.sum().data[0] == B:
+                            continue
                         selected_mask = min_idx[topk].eq(mi).long() # [B]
                         if self.use_gpu and torch.cuda.is_available():
                             selected_mask = selected_mask.cuda()
 
                         if topk == 0:
                             sampled_labels = net_utils.where(selected_mask, labels, random_labels[mi])
-                            coeffi = selected_mask
+                            finally_selected = selected_mask
                         else:
                             sampled_labels = net_utils.where(selected_mask, labels, sampled_labels)
-                            coeffi += selected_mask
+                            finally_selected += selected_mask
 
-                    finally_selected = coeffi.ge(1.0).float()
+                    finally_selected = finally_selected.ge(1.0).float()
                     coeff = net_utils.where(finally_selected, one_mask, beta_mask)
                     loss = coeff * F.cross_entropy(logit_list[mi], sampled_labels, reduce=False)
                     if mi == 0:
@@ -898,12 +927,13 @@ class EnsembleLoss(nn.Module):
             self.assignment_loss = None
 
         if self.version != "IE":
+            max_k = min_idx.size()[0]
             assign_num = []
             for i in range(self.m):
-                cur_num = [min_idx[k].eq(i).sum().data[0] for k in range(self.k)]
+                cur_num = [min_idx[k].eq(i).sum().data[0] for k in range(max_k)]
                 assign_num.append(sum(cur_num))
-            txt = "|".join("{:03d}".format(assign_num[i]) for i in range(self.m)
-            )
+            txt = "|".join("{:03d}".format(assign_num[i]) for i in range(self.m)) \
+                + "|{:03d}".format(sum(assign_num))
             print(txt, end="\r")
             if (self.iteration % (100)) == 0:
                 self.logger.info(log_txt + txt)
@@ -1019,116 +1049,3 @@ class MultipleCriterion(nn.Module):
             loss = loss.mean()
 
         return loss
-
-"""
-        elif self.version == "KD-MCL":
-            # compute KL divergence with teacher distribution for each model
-            nonspecialist_loss_list = self.compute_kld(logit_list, inp[-1])
-
-            # compute or get assignments
-            if self.use_initial_assignment:
-                txt = "KD-MCL using pre-computed assignments "
-                print(txt, end="")
-                if (self.iteration % (100)) == 0:
-                    log_txt += txt
-                assignments = inp[-2].clone()
-                if assignments.dim() == 1:
-                    min_idx = assignments.clone().view(1, assignments.size(0))
-                elif assignments.dim() == 2:
-                    min_idx = assignments.clone().t() # [k, B]
-                else:
-                    raise ValueError("Error: dim(assignments) > 2")
-                self.assignments = assignments.cpu().data # [B, k]
-
-                # re-assign based on accuracy
-                # for assigned data, only when assigned model is failure and
-                # other model predicts correctly, we replace the assignment
-                if self.assign_using_accuracy:
-                    prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0) \
-                                 for logit in logit_list] # m*[B,C]
-                    indices= []
-                    corrects = []
-                    for prob in prob_list:
-                        val, idx = torch.max(prob, dim=1)
-                        indices.append(idx)
-                        corrects.append(torch.eq(idx, labels))
-                    correct_tensors = torch.stack(corrects, dim=0).data.cpu() # [m,B]
-                    selected_corrects = correct_tensors.gather(0, min_idx)
-                    new_assignments = np.zeros((B, self.k))
-                    origin_assignments = self.assignments.numpy() # [B,k]
-                    num_changed = 0
-                    for b in range(B):
-                        if (selected_corrects[:,b].sum() == 0) \
-                                and (correct_tensors[:,b].sum() > 0):
-                            num_changed += 1
-                            replace_cands = []
-                            for s in range(self.m):
-                                if correct_tensors[s,b] == 1:
-                                    replace_cands.append(s)
-                            num_cands = len(replace_cands)
-                            if num_cands  >= self.k:
-                                shuffle(replace_cands)
-                                new_assignments[b] = np.asarray(replace_cands[:self.k])
-                            else:
-                                new_assignments[b,:num_cands] = \
-                                    np.asarray(replace_cands)
-                                new_assignments[b,num_cands:] = \
-                                    origin_assignments[b,:self.k-num_cands]
-                        else:
-                            new_assignments[b] = origin_assignments[b]
-
-                    # overwrite assignments
-                    self.assignments = torch.from_numpy(new_assignments).long()
-                    min_idx = Variable(self.assignments.clone().t())
-                    txt = "{:03d} changed ".format(num_changed)
-                    print(txt, end="")
-                    if (self.iteration % (100)) == 0:
-                        log_txt += txt
-
-            else:
-                # compute oracle loss
-                oracle_loss_list = []
-                for mi in range(self.m):
-                    if (mi+1) != self.m:
-                        oracle_loss_list.append( task_loss_list[mi] \
-                                + self.beta * (sum(nonspecialist_loss_list[:mi]) \
-                                + sum(nonspecialist_loss_list[mi+1:]))) # m * [B,]
-                    else:
-                        oracle_loss_list.append(task_loss_list[mi] \
-                                + self.beta * sum(nonspecialist_loss_list[:mi])) # m*[B]
-
-                # compute assignments
-                oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [m,B]
-                min_val, min_idx = oracle_loss_tensor.t().topk(
-                        self.k, dim=1, largest=False) # [B,k]
-                self.assignments = net_utils.get_data(min_idx) # [B,k]
-                min_idx = min_idx.t() # [k,B]
-
-                KLD_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
-                txt = "KD-MCL CE {} | KLD {} | ORACLE {} ".format(
-                    "/".join("{:.3f}".format(
-                        task_loss_tensor[i,0].data[0]) for i in range(self.m)),
-                    "/".join("{:6.3f}".format(
-                        KLD_tensor[i,0].data[0]) for i in range(self.m)),
-                    "/".join("{:6.3f}".format(
-                        oracle_loss_tensor[i,0].data[0]) for i in range(self.m)))
-                print(txt, end="")
-                if (self.iteration % (100)) == 0:
-                    log_txt += txt
-
-            # compute loss with assignments
-            total_loss = 0
-            for mi in range(self.m):
-                for topk in range(self.k):
-                    selected_mask = min_idx[topk].eq(mi).float() # [B]
-                    if self.use_gpu and torch.cuda.is_available():
-                        selected_mask = selected_mask.cuda()
-
-                    cur_loss = net_utils.where(selected_mask,
-                            task_loss_list[mi], self.beta*nonspecialist_loss_list[mi])
-                    total_loss += cur_loss.sum()
-            #total_loss = total_loss / self.m / B / self.k
-            total_loss = total_loss / B
-            # End of KD-MCL
-
-"""

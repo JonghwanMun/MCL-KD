@@ -161,16 +161,21 @@ def get_assignment4batch(assigns, idx):
     """ Return assignments for each data
     Args:
         assigns: pre-defined assignment set; nc*[k]
-        idx: index for assignment; [B]
+        idx: index of assignment for each item in batch; [B]
     Returns:
-        batch_assigns: assignments for batch; [B, k]
+        batch_assigns: assignments for batch; [B, max_len]
     """
 
-    batch_assigns = []
-    for i in idx:
-        batch_assigns.append(np.asarray(assigns[i]))
+    B = len(idx)
+    k_len = [len(a) for a in assigns]
+    max_len = max([len(a[i]) for i in idx])
+    batch_assigns = np.zeros((B, max_len))
+    batch_assigns.fill(-1) # we use -1 as null assignment
+    for i in range(B):
+        assign_idx = idx[i]
+        batch_assigns[i, 0:k_len[assign_idx]] = assigns[assign_idx]
 
-    return Variable(torch.from_numpy(np.vstack(batch_assigns))).long()
+    return Variable(torch.from_numpy(batch_assigns)).long().t() # [max_k, B]
 
 
 
