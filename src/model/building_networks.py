@@ -407,7 +407,7 @@ class Ensemble(VirtualVQANetwork):
                     "|".join(str(sls[0][i]) for i in range(sls.size(1))))
                 if self.use_assignment_model:
                     txt += "pred-assign= {}, ".format(self.pred_assignments[0])
-            txt += " ({}|{}|{})".format(
+            txt += " ({}->{}/{})".format(
                 "|".join(pred for pred in self.basenet_pred),
                 utils.label2string(self.itoa, self.top1_predictions[0]), self.top1_gt)
 

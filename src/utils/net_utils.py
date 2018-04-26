@@ -168,7 +168,26 @@ def get_assignment4batch(assigns, idx):
 
     B = len(idx)
     k_len = [len(a) for a in assigns]
-    max_len = max([len(a[i]) for i in idx])
+    max_len = max([len(assigns[i]) for i in idx])
+    batch_assigns = -np.ones((B, max_len)) # we use -1 as null assignment
+    for i in range(B):
+        assign_idx = idx[i]
+        batch_assigns[i, 0:k_len[assign_idx]] = assigns[assign_idx]
+
+    return Variable(torch.from_numpy(batch_assigns)).long().t() # [max_k, B]
+
+def assignment2sets(assigns, idx):
+    """ Return assignments for each data
+    Args:
+        assigns: assignment for models over batch; [m,B]
+    Returns:
+        assign_set: set of assigned model index; [B, set]
+        not_assign_set: set of not assigned model index; [B, set]
+    """
+
+    B = len(idx)
+    k_len = [len(a) for a in assigns]
+    max_len = max([len(assigns[i]) for i in idx])
     batch_assigns = np.zeros((B, max_len))
     batch_assigns.fill(-1) # we use -1 as null assignment
     for i in range(B):
