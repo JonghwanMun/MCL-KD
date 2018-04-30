@@ -1,4 +1,3 @@
-
 model:
     checkpoint_path: ""
     use_gpu: True
@@ -12,7 +11,7 @@ model:
     img_emb2d_only_l2_norm: False 
     # question embedding layer
     word_emb_dim: 300
-    word_emb_padding_idx: -1 # will be assigned automatically
+    word_emb_padding_idx: -1 # will be assigned automatically from data loader
     word_emb_dropout_prob: 0
     apply_word_emb_nonlinear: False
     rnn_type: "LSTM"

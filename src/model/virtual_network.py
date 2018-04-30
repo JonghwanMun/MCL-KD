@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 
-from src.utils import accumulator, utils, io_utils, net_utils
+from src.utils import accumulator, timer, utils, io_utils, net_utils
 from src.utils.tensorboard_utils import PytorchSummary
 
 class VirtualNetwork(nn.Module):
@@ -31,6 +31,8 @@ class VirtualNetwork(nn.Module):
         self._create_counters()
         self._get_loggers()
         self.reset_status(init_reset=True)
+
+        self.tm = timer.Timer() # tm: timer
 
     """ methods for forward/backward """
     def forward(self, data):
@@ -101,9 +103,18 @@ class VirtualNetwork(nn.Module):
         # where the 1st and 2nd items should be loss and inputs for criterion layer
         # (e.g. logits), and remaining items would be intermediate values of network
         # that you want to show or check
+        self.tm.reset()
         outputs = self.forward(data)
+        forward_duration = self.tm.get_duration()
+        self.tm.reset()
         loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
+        loss_duration = self.tm.get_duration()
+        self.tm.reset()
         self.update(loss, lr)
+        update_duration = self.tm.get_duration()
+        txt = "forward {:.4f}s | loss {:.4f}s | update {:.4f}s"
+        print(txt.format(
+            forward_duration, loss_duration, update_duration), end="\r")
         return [loss, *outputs]
 
     def evaluate(self, batch):

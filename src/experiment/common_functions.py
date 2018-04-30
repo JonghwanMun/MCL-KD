@@ -182,11 +182,13 @@ def evaluate_calibration(config, loader, net, epoch, logger_name="epoch", mode="
             break
         # end for batch in loader
 
+    logger.info("\nAt epoch {}".format(epoch+1))
     for cnt_k,cnt_v in counters.items():
         txt = cnt_k + " "
         for k,v in cnt_v.items():
-            txt += ", {} = {:.3f}".format(v.get_name(), v.get_average())
+            txt += ", {} = {:.5f}".format(v.get_name(), v.get_average())
         print(txt)
+        logger.info(txt)
 
     """
     net.metric = net.counters["top1-avg"].get_average() # would be used for tuning parameter

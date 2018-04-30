@@ -1,5 +1,5 @@
 # for clevr
-batch_size: 128
+batch_size: 64
 encoded_hdf5_path: data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_val.h5
 encoded_json_path: data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_val.json
 feat_dir: data/CLEVR_v1.0/feats/resnet_conv4_feats
