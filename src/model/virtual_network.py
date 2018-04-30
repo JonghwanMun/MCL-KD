@@ -27,6 +27,7 @@ class VirtualNetwork(nn.Module):
         self.use_tf_summary = False
         self.it = 0 # it: iteration
         self.update_every = 1
+        self.qsts = None
 
         self._create_counters()
         self._get_loggers()
@@ -98,6 +99,7 @@ class VirtualNetwork(nn.Module):
         if self.is_main_net:
             self.cur_qids = batch[1]
             data = self.tensor2variable(batch)
+            self.qsts = net_utils.get_data(data[1])
 
         # Note that return value is a list of at least two items
         # where the 1st and 2nd items should be loss and inputs for criterion layer
@@ -128,6 +130,7 @@ class VirtualNetwork(nn.Module):
         if self.is_main_net:
             self.cur_qids = batch[1]
             data = self.tensor2variable(batch)
+            self.qsts = net_utils.get_data(data[1])
 
         # Note that return value is a list of at least two items
         # where the 1st and 2nd items should be loss and inputs for criterion layer
@@ -329,14 +332,12 @@ class VirtualNetwork(nn.Module):
         config["misc"]["debug"] = params["debug_mode"]
         config["misc"]["dataset"] = params["dataset"]
         config["misc"]["num_workers"] = params["num_workers"]
-        config["misc"]["exp_prefix"] = utils.get_filename_from_path(
-            params["config_path"])
-        config["misc"]["result_dir"] = os.path.join("results",
-            utils.get_filename_from_path(params["config_path"],
-            delimiter="options/"))
-        config["misc"]["tensorboard_dir"] = os.path.join("tensorboard",
-            utils.get_filename_from_path(params["config_path"],
-            delimiter="options/"))
+        exp_prefix = utils.get_filename_from_path(params["config_path"], delimiter="options/") \
+                if "options" in params["config_path"] \
+                else utils.get_filename_from_path(params["config_path"], delimiter="results/")[:-7]
+        config["misc"]["exp_prefix"] = exp_prefix
+        config["misc"]["result_dir"] = os.path.join( "results", exp_prefix)
+        config["misc"]["tensorboard_dir"] = os.path.join("tensorboard", exp_prefix)
         config["misc"]["model_type"] = params["model_type"]
 
         return config

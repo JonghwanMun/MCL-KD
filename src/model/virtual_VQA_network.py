@@ -130,6 +130,7 @@ class VirtualVQANetwork(VirtualNetwork):
                     self.criterion.assignments.clone().numpy())
 
             # assignments [B, k]
+            B = gts.size(0)
             assigns = self.criterion.assignments # [B, max_k]
             if assigns.dim() > 1:
                 num_k = assigns.size(1)
@@ -138,10 +139,20 @@ class VirtualVQANetwork(VirtualNetwork):
                 assigns = assigns.view(-1,1)
             onehot = net_utils.idx2onehot(gts, len(self.itoa)) # [B, num_labels]
             for topk in range(num_k):
-                for bi in range(gts.size(0)):
+                for bi in range(B):
                     if assigns[bi,topk] == -1:
                         continue
                     self.assign_per_model[assigns[bi,topk]] += onehot[bi]
+
+            gt_str = [utils.label2string(self.itoa, label) for label in gts]
+            qst_str = [utils.label2string(self.itow, q) for q in self.qsts]
+            #self.assignment_qst_ans_pairs
+            for bi in range(B):
+                for topk in range(num_k):
+                    assign_idx = assigns[bi,topk]
+                    if assign_idx == -1:
+                        continue
+                    self.assignment_qst_ans_pairs[assign_idx][gt_str[bi]].add(qst_str[bi])
 
     def attach_predictions(self):
         for i in range(len(self.cur_qids)):

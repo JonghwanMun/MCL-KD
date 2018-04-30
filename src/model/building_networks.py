@@ -2,7 +2,7 @@ import os
 import pdb
 import copy
 import numpy as np
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import torch
 import torch.nn as nn
@@ -198,9 +198,8 @@ class Ensemble(VirtualVQANetwork):
         else:
             origin_qst_ids = self.origin_test_qst_ids
 
-        assignments, qst_ids = \
-                cmf.reorder_assignments_using_qst_ids(
-                    origin_qst_ids, qst_ids, assignments, is_subset=True)
+        assignments, qst_ids = cmf.reorder_assignments_using_qst_ids(
+                origin_qst_ids, qst_ids, assignments, is_subset=True)
 
         # setting directory for saving assignments
         save_dir = os.path.join(self.config["misc"]["result_dir"], "assignments", mode)
@@ -212,12 +211,21 @@ class Ensemble(VirtualVQANetwork):
         hdf5_file.create_dataset("assignments", dtype="int32", data=assignments)
         print("Assignments are saved in {}".format(save_hdf5_path))
 
+        save_json_path = os.path.join(save_dir, prefix + "_assignment.json")
+        for qsp in self.assignment_qst_ans_pairs:
+            for k,v in qsp.items():
+                qsp[k] = list(qsp[k])
+        io_utils.write_json(save_json_path, self.assignment_qst_ans_pairs)
+        print("Assignments (ans-qst) are saved in {}".format(save_json_path))
+
+        """
         # save assignments of qst_ids
         save_json_path = os.path.join(save_dir, prefix + "_qst_ids.json")
         out = {}
         out["question_ids"] = qst_ids
         io_utils.write_json(save_json_path, out)
         print ("Saving is done: {}".format(save_json_path))
+        """
 
     def visualize_assignments(self, prefix, mode="train"):
         class_names = [self.itoa[str(key)] for key in range(len(self.itoa.keys()))]
@@ -334,6 +342,9 @@ class Ensemble(VirtualVQANetwork):
         self.qst_ids_list = []
         if self.config["model"]["version"] != "IE":
             self.assignments_list = []
+            self.assignment_qst_ans_pairs = []
+            for mi in range(self.num_models):
+                self.assignment_qst_ans_pairs.append(defaultdict(lambda: set()))
 
         if not init_reset:
             self.assign_per_model = torch.zeros(self.num_models, len(self.itoa))
