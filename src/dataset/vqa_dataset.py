@@ -545,9 +545,7 @@ class DataSet(data.Dataset):
             sample = self.__getitem__(idx)
 
             # TODO
-            cur_answer_label = sample[-2][0]
-            if type(cur_answer_label) == type(list()):
-                cur_answer_label = cur_answer_label[0]
+            cur_answer_label = sample[-2][0][0]
             random_prob = np.random.rand(1)[0]
             if random_prob < 0.001:
                 sample_answers.append(cur_answer_label)
