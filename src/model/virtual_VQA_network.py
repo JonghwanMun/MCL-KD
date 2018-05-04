@@ -262,8 +262,6 @@ class VirtualVQANetwork(VirtualNetwork):
                 self.probs = torch.mean(self.probs, dim=0) # [B, num_answers]
 
         else:
-            if self.use_knowledge_distillation:
-                logits = logits[0]
             B = logits.size(0)
             if type(self.probs) == type(None):
                 self.probs = F.softmax(logits, dim=1)

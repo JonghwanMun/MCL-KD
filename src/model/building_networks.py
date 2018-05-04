@@ -240,11 +240,12 @@ class Ensemble(VirtualVQANetwork):
         # save predictions
         self.save_predictions(prefix)
         # save visualization of confusion matrix for each model
-        epoch = int(prefix.split("_")[-1])
-        self.visualize_confusion_matrix(epoch, prefix=mode)
-        if self.config["model"]["version"] != "IE":
-            self.save_assignments(prefix, mode)
-            self.visualize_assignments(prefix=prefix, mode=mode)
+        if self.config["misc"]["dataset"] != "vqa":
+            epoch = int(prefix.split("_")[-1])
+            self.visualize_confusion_matrix(epoch, prefix=mode)
+            if self.config["model"]["version"] != "IE":
+                self.save_assignments(prefix, mode)
+                #self.visualize_assignments(prefix=prefix, mode=mode)
 
         """ given sample data """
         if data is not None:
@@ -284,6 +285,7 @@ class Ensemble(VirtualVQANetwork):
                     criterion_inp.append(data[3])
 
                 if self.use_knowledge_distillation:
+                    # TODO: implement to use pre-computed logits of base models
                     if self.use_knowledge_distillation:
                         self.base_outs = []
                         for i in range(len(self.base_model)):
@@ -568,8 +570,9 @@ class SAN(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix)
-        epoch = int(prefix.split("_")[-1])
-        self.visualize_confusion_matrix(epoch, prefix=mode)
+        if self.config["misc"]["dataset"] != "vqa":
+            epoch = int(prefix.split("_")[-1])
+            self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
@@ -688,8 +691,9 @@ class SAAA(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix)
-        epoch = int(prefix.split("_")[-1])
-        self.visualize_confusion_matrix(epoch, prefix=mode)
+        if self.config["misc"]["dataset"] != "vqa":
+            epoch = int(prefix.split("_")[-1])
+            self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
@@ -809,8 +813,9 @@ class SharedSAAA(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix)
-        epoch = int(prefix.split("_")[-1])
-        self.visualize_confusion_matrix(epoch, prefix=mode)
+        if self.config["misc"]["dataset"] != "vqa":
+            epoch = int(prefix.split("_")[-1])
+            self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
@@ -896,8 +901,6 @@ class EnsembleInference(VirtualVQANetwork):
         out = [self.logits]
         return out
 
-        return out
-
     def save_results(self, data, prefix, mode="train", compute_loss=False):
         """ Get qualitative results (attention weights) and save them
         Args:
@@ -905,8 +908,9 @@ class EnsembleInference(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix)
-        epoch = int(prefix.split("_")[-1])
-        self.visualize_confusion_matrix(epoch, prefix=mode)
+        if self.config["misc"]["dataset"] != "vqa":
+            epoch = int(prefix.split("_")[-1])
+            self.visualize_confusion_matrix(epoch, prefix=mode)
 
     @classmethod
     def model_specific_config_update(cls, config):
@@ -1008,8 +1012,9 @@ class SharedSAAA(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix)
-        epoch = int(prefix.split("_")[-1])
-        self.visualize_confusion_matrix(epoch, prefix=mode)
+        if self.config["misc"]["dataset"] != "vqa":
+            epoch = int(prefix.split("_")[-1])
+            self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data

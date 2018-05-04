@@ -259,7 +259,8 @@ def save_mcl_visualization(config, data, result, class_name, itow, itoa, \
             for i in range(len(data[3])):
                 logits.append(data[3][i][idx])
         selections = data[2][idx]
-        add_answer_row_subplot(fig, gc, [logits, selections], gt, itoa, 1, class_name)
+        #add_answer_row_subplot(fig, gc, [logits, selections], gt, itoa, 1, class_name)
+        add_answer_row_subplot(fig, gc, [logits, selections], gt, itoa, 1)
 
         # save figure and close it
         img_filename = utils.get_filename_from_path(img_path)

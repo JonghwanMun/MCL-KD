@@ -36,18 +36,6 @@ def idx2onehot(idx, num_labels):
 
 def compute_kl_div(inputs, targets, tau=-1, \
                     apply_softmax_on_target=True, reduce=False):
-    """
-    N = inputs.size(0)
-    C = inputs.size(1)
-
-    class_mask = inputs.data.new(N, C).fill_(0)
-    class_mask = Variable(class_mask)
-    class_mask[targets!=0]=1
-    targets[targets==0] = 2 # Avoid log(0)
-
-    probs = (logP.exp()*class_mask).sum(1).view(-1,1)
-    batch_loss = (targets * (targets.log() - logP) * class_mask).sum(1)
-    """
 
     if tau > 0:
         inputs = inputs / tau

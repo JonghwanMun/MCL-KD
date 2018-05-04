@@ -419,10 +419,11 @@ class DataSet(data.Dataset):
         self.json_file = io_utils.load_json(self.json_path)
 
         # set path of pre-computed assignments
+        # NOTE: DEPRECATED
         self.assignment_path = utils.get_value_from_dict(config, "assignment_path", "")
 
-        self.fetching_answer_option = utils.get_value_from_dict(
-                config, "fetching_answer_option", "simple")
+        # set path of pre-computed logits of base models
+        self.base_logits_path = utils.get_value_from_dict(config, "base_logits_path", "")
 
     def __getitem__(self, idx):
         """ Retrun a data (images, question_label, question length and answers)
@@ -461,10 +462,16 @@ class DataSet(data.Dataset):
         # prepare batch output
         out = [img, qst_label, qst_length]
         if self.assignment_path != "":
+            # NOTE: DEPRECATED
             # obtain assignment label
             assignment_file = io_utils.load_hdf5(self.assignment_path, verbose=False)
             assignments = torch.from_numpy(assignment_file["assignments"][idx])
             out.append(assignments)
+        if self.base_logits_path != "":
+            # obtain assignment label
+            base_logits = io_utils.load_hdf5(self.base_logits_path, verbose=False)
+            base_logits = torch.from_numpy(base_logits["base_logits"][idx])
+            out.append(base_logits)
         out.append(answer)
         out.append(qst_id)
 
@@ -577,6 +584,6 @@ def collate_fn(batch):
     items[1] = torch.stack(items[1], 0).long() # question labels
     items[-1] = torch.stack(items[-1], 0).squeeze() # answers
     if num_items == 5:
-        items[-2] = torch.stack(items[-2], 0).long() # for pre-computed assignments
+        items[-2] = torch.stack(items[-2], 0) # for pre-computed logits of base models
     return return_vals
 

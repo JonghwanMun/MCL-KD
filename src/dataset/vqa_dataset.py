@@ -53,10 +53,7 @@ def GetAnnotationsFromFile(config, split):
 
         for ann in annotations["annotations"]:
             ann["data_type"] = split  # save the data_type [train|val|test]
-            if split == "test-dev":
-                ann["image_filename"] = \
-                    config["test_image_path"] % ("test", "test", ann["image_id"])
-            elif split == "test":
+            if split in ["test-dev", "test"]:
                 ann["image_filename"] = \
                     config["test_image_path"] % ("test", "test", ann["image_id"])
             else:
@@ -443,8 +440,11 @@ class DataSet(data.Dataset):
             self.second_frequent_answer_labels = self.json_file["second_frequent_answer_labels"]
 
         # set path of pre-computed assignments
+        # NOTE: DEPRECATED
         self.assignment_path = utils.get_value_from_dict(config, "assignment_path", "")
 
+        # set path of pre-computed logits of base models
+        self.base_logits_path = utils.get_value_from_dict(config, "base_logits_path", "")
 
     def __getitem__(self, idx):
         """ Retrun a data (images, question_label, question length and answers)
@@ -455,7 +455,7 @@ class DataSet(data.Dataset):
             answer: answer for questions
         """
 
-        # obtain image (as raw or feature)
+        # obtain image (in raw or feature)
         img_filename = self.json_file["image_filenames"][idx]
         if self.use_img:
             img_path = os.path.join(self.img_dir, img_filename)
@@ -507,10 +507,15 @@ class DataSet(data.Dataset):
         # prepare batch output
         out = [img, qst_label, qst_length]
         if self.assignment_path != "":
+            # NOTE: DEPRECATED
             # obtain assignment label
             assignment_file = io_utils.load_hdf5(self.assignment_path, verbose=False)
-            assignments = torch.from_numpy(assignment_file["selections"][idx])
+            assignments = torch.from_numpy(assignment_file["assignments"][idx])
             out.append(assignments)
+        if self.base_logits_path != "":
+            base_logits = io_utils.load_hdf5(self.base_logits_path, verbose=False)
+            base_logits = torch.from_numpy(base_logits["base_logits"][idx])
+            out.append(base_logits)
         out.append(answer)
         out.append(qst_id)
         return out
@@ -529,14 +534,36 @@ class DataSet(data.Dataset):
         """
 
         samples = []
-        for si in range(num_samples):
+        cur_num_samples = 0
+        sample_answers = []
+        while True:
             # randomly select index of sample
             idx = np.random.randint(0, len(self)-1)
 
             # obtain question label, its length and answer
             img_filename = self.json_file["image_filenames"][idx]
             sample = self.__getitem__(idx)
-            samples.append([*sample[:-1], img_filename])
+
+            # TODO
+            cur_answer_label = sample[-2][0]
+            if type(cur_answer_label) == type(list()):
+                cur_answer_label = cur_answer_label[0]
+            random_prob = np.random.rand(1)[0]
+            if random_prob < 0.001:
+                sample_answers.append(cur_answer_label)
+                samples.append([*sample[:-1], img_filename])
+                cur_num_samples += 1
+            else:
+                # we get samples with different answers
+                if cur_answer_label in sample_answers:
+                    continue
+                else:
+                    sample_answers.append(cur_answer_label)
+                    samples.append([*sample[:-1], img_filename])
+                    cur_num_samples += 1
+
+            if cur_num_samples == num_samples:
+                break
 
         return collate_fn(samples)
 
@@ -603,13 +630,13 @@ def collate_fn(batch):
     items[1] = torch.stack(items[1], 0).long() # question labels
     if type(items[-1][0]) == type(list()):
         answer, all_answer, mask = zip(*items[-1])
-        items[-1] = [torch.stack(answer, 0).squeeze(),    # most frequent answers
-                     torch.stack(all_answer, 0).squeeze(),          # all answers
-                     torch.stack(mask, 0).float().squeeze()]                # mask for all answers
+        items[-1] = [torch.stack(answer, 0).squeeze(),       # most frequent answers
+                     torch.stack(all_answer, 0).squeeze(),   # all answers
+                     torch.stack(mask, 0).float().squeeze()] # mask for all answers
     else:
         items[-1] = torch.stack(items[-1], 0).squeeze() # from scalar (tuple) to 1D tensor
     if num_items == 5:
-        items[-2] = torch.stack(items[-2], 0).long() # for pre-computed assignments
+        items[-2] = torch.stack(items[-2], 0) # for pre-computed logits of base models
     return return_vals
 
 

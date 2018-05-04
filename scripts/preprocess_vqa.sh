@@ -59,3 +59,12 @@ stdbuf -oL python -m src.preprocess.preprocess_vqa \
 	--save_encoded_qa_dir 'data/VQA_v2.0/preprocess/encoded_qa' \
 	--question_filter_option 'only_questions' \
 	2>&1 | tee logs/log_encode_question_answer_VQA_v2.0_test_from_train-val_3000_vocab.log
+
+# Preprocessing test split
+echo $'\n=====> Preprocessing on test split'
+stdbuf -oL python -m src.preprocess.preprocess_vqa \
+	--target_splits 'test-dev' \
+	--vocab_path 'data/VQA_v2.0/preprocess/vocabulary/vqa_3000_vocab_train-val_raw.json' \
+	--save_encoded_qa_dir 'data/VQA_v2.0/preprocess/encoded_qa' \
+	--question_filter_option 'only_questions' \
+	2>&1 | tee logs/log_encode_question_answer_VQA_v2.0_test-dev_from_train-val_3000_vocab.log

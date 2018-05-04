@@ -105,18 +105,18 @@ class VirtualNetwork(nn.Module):
         # where the 1st and 2nd items should be loss and inputs for criterion layer
         # (e.g. logits), and remaining items would be intermediate values of network
         # that you want to show or check
-        self.tm.reset()
+        #self.tm.reset()
         outputs = self.forward(data)
-        forward_duration = self.tm.get_duration()
-        self.tm.reset()
+        #forward_duration = self.tm.get_duration()
+        #self.tm.reset()
         loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
-        loss_duration = self.tm.get_duration()
-        self.tm.reset()
+        #loss_duration = self.tm.get_duration()
+        #self.tm.reset()
         self.update(loss, lr)
-        update_duration = self.tm.get_duration()
-        txt = "forward {:.4f}s | loss {:.4f}s | update {:.4f}s"
-        print(txt.format(
-            forward_duration, loss_duration, update_duration), end="\r")
+        #update_duration = self.tm.get_duration()
+        #txt = "forward {:.4f}s | loss {:.4f}s | update {:.4f}s"
+        #print(txt.format(
+        #    forward_duration, loss_duration, update_duration), end="\r")
         return [loss, *outputs]
 
     def evaluate(self, batch):
