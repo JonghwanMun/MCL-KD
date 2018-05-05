@@ -15,7 +15,7 @@ from torch.autograd import Variable
 from src.model import building_networks
 from src.dataset import clevr_dataset, vqa_dataset
 from src.experiment import common_functions as cmf
-from src.utils import accumulator, timer, utils, io_utils
+from src.utils import accumulator, timer, utils, io_utils, net_utils
 
 """ Get parameters """
 def _get_argument_params():
@@ -59,9 +59,9 @@ if __name__ == "__main__":
     else:
         dset = dataset.DataSet(config["test_loader"])
 
-    L = data.DataLoader(dset, batch_size=32, \
-                                 num_workers=config["misc"]["num_workers"], \
-                                 shuffle=False, collate_fn=dataset.collate_fn)
+    L = data.DataLoader(dset, batch_size=64, \
+                     num_workers=config["misc"]["num_workers"], \
+                     shuffle=False, collate_fn=dataset.collate_fn)
     config = M.override_config_from_loader(config, dset)
 
     """ Build network """
@@ -97,10 +97,16 @@ if __name__ == "__main__":
     net.eval_mode() # set network as train mode
     net.reset_status() # initialize status
 
+    """
     # get assignments
     cmf.save_assignments(config, L, net, dset.get_qst_ids(), \
         prefix="MCL_e5_from_IE_e10", mode=params["mode"])
         #prefix="KD-MCL-beta100", mode=params["mode"])
+
+    # save logits
+    cmf.save_logits(config, L, net, prefix="MCL_e5_from_IE_e10", mode=params["mode"])
+        #prefix="KD-MCL-beta100", mode=params["mode"])
+    """
 
     print("=====> Do Interactive Mode")
 

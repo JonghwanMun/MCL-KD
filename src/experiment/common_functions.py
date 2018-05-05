@@ -12,7 +12,7 @@ from collections import OrderedDict
 
 from src.dataset import clevr_dataset, vqa_dataset
 from src.model import building_blocks, building_networks
-from src.utils import accumulator, timer, utils, io_utils
+from src.utils import accumulator, timer, utils, io_utils, net_utils
 
 """ get base model """
 def get_model(base_model_type):
@@ -266,6 +266,27 @@ def save_assignments(config, L, net, qst_ids, prefix="", mode="train"):
     out["question_ids"] = qst_ids
     json.dump(out, open(save_json_path, "w"))
     print ("Saving is done: {}".format(save_json_path))
+
+def save_logits(config, L, net, prefix="", mode="train"):
+
+    # save assignments
+    save_dir = os.path.join(config["misc"]["result_dir"], "logits", str(prefix))
+    io_utils.check_and_create_dir(save_dir)
+
+    for batch in tqdm(L):
+        # forward the network
+        outputs = net.evaluate(batch)
+
+        if type(outputs[1]) == type(list()):
+            logits = net_utils.get_data(torch.stack(outputs[1], 0)) # [m,B,num_answers]
+        else:
+            logits = net_utils.get_data(outputs[1]) # [B,num_answers]
+
+        # save logits as filename of qid
+        for qi,qst_id in enumerate(batch[1]):
+            save_path = os.path.join(save_dir, "{}.npy".format(qst_id))
+            np.save(save_path, logits[qi].numpy())
+
 
 """ Methods for debugging """
 def one_step_forward(L, net):

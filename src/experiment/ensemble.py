@@ -38,8 +38,10 @@ def _get_argument_params():
 #                     + "all_questions_use_zero_token_max_qst_len_45/"
 #                     + "m3_o1_assignment_train.h5",
                      help="Path to assignment file.")
+	parser.add_argument("--save_logits" , action="store_true", default=False,
+		help="Save logits of each model")
 	parser.add_argument("--debug_mode" , action="store_true", default=False,
-		help="Train the model in debug mode.")
+		help="Train the model in debug mode")
 
 	params = vars(parser.parse_args())
 	print(json.dumps(params, indent=4))
@@ -148,6 +150,9 @@ def ensemble(config):
             outputs = nets[i].evaluate(batch)
             prob_list.append(outputs[1]) # m*[B,A]
 
+        if config["save_logits"]:
+            TODO = True
+
         for T in tau:
             tau_name = "tau-"+str(T)
             probs = [net_utils.get_data(F.softmax(logits/T, dim=1)) \
@@ -211,6 +216,7 @@ def main(params):
     config["debug_mode"] = params["debug_mode"]
     config["out"] = params["output_filename"]
     config["assignment_path"] = params["assignment_path"]
+    config["save_logits"] = params["save_logits"]
 
     # ensemble networks
     ensemble(config)

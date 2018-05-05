@@ -238,7 +238,7 @@ class Ensemble(VirtualVQANetwork):
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_path]
         """
         # save predictions
-        self.save_predictions(prefix)
+        self.save_predictions(prefix, mode)
         # save visualization of confusion matrix for each model
         if self.config["misc"]["dataset"] != "vqa":
             epoch = int(prefix.split("_")[-1])
@@ -569,7 +569,7 @@ class SAN(VirtualVQANetwork):
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
         """
         # save predictions
-        self.save_predictions(prefix)
+        self.save_predictions(prefix, mode)
         if self.config["misc"]["dataset"] != "vqa":
             epoch = int(prefix.split("_")[-1])
             self.visualize_confusion_matrix(epoch, prefix=mode)
@@ -690,7 +690,7 @@ class SAAA(VirtualVQANetwork):
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
         """
         # save predictions
-        self.save_predictions(prefix)
+        self.save_predictions(prefix, mode)
         if self.config["misc"]["dataset"] != "vqa":
             epoch = int(prefix.split("_")[-1])
             self.visualize_confusion_matrix(epoch, prefix=mode)
@@ -812,7 +812,7 @@ class SharedSAAA(VirtualVQANetwork):
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
         """
         # save predictions
-        self.save_predictions(prefix)
+        self.save_predictions(prefix, mode)
         if self.config["misc"]["dataset"] != "vqa":
             epoch = int(prefix.split("_")[-1])
             self.visualize_confusion_matrix(epoch, prefix=mode)
@@ -907,7 +907,7 @@ class EnsembleInference(VirtualVQANetwork):
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
         """
         # save predictions
-        self.save_predictions(prefix)
+        self.save_predictions(prefix, mode)
         if self.config["misc"]["dataset"] != "vqa":
             epoch = int(prefix.split("_")[-1])
             self.visualize_confusion_matrix(epoch, prefix=mode)
@@ -1011,7 +1011,7 @@ class SharedSAAA(VirtualVQANetwork):
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
         """
         # save predictions
-        self.save_predictions(prefix)
+        self.save_predictions(prefix, mode)
         if self.config["misc"]["dataset"] != "vqa":
             epoch = int(prefix.split("_")[-1])
             self.visualize_confusion_matrix(epoch, prefix=mode)

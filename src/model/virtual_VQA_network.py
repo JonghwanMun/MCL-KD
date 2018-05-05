@@ -167,10 +167,15 @@ class VirtualVQANetwork(VirtualNetwork):
                 "answer": utils.label2string(self.itoa, self.top1_predictions[i])
             })
 
-    def save_predictions(self, prefix):
-        save_dir = os.path.join(self.config["misc"]["result_dir"], "predictions")
-        io_utils.write_json(os.path.join(
-            save_dir, prefix+".json"), self.all_predictions)
+    def save_predictions(self, prefix, mode):
+        save_dir = os.path.join(self.config["misc"]["result_dir"], "predictions", mode)
+        io_utils.check_and_create_dir(save_dir)
+        save_json_path = os.path.join(save_dir, prefix+".json")
+        io_utils.write_json(save_json_path, self.all_predictions)
+
+        if (self.config["misc"]["dataset"] == "vqa") and (mode == "eval"):
+            net_utils.vqa_evaluate(
+                save_json_path, self.logger["epoch"], small_set=True)
 
     """ methods for counters """
     def _create_counters(self):

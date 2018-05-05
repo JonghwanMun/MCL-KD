@@ -1,5 +1,6 @@
 import os
 import pdb
+import json
 import numpy as np
 from itertools import combinations
 
@@ -9,6 +10,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from src.utils import accumulator, utils, io_utils, net_utils
+from src.externals.VQA_evaluation_APIs.PythonHelperTools.vqaTools.vqa import VQA
+from src.externals.VQA_evaluation_APIs.PythonEvaluationTools.vqaEvaluation.vqaEval import VQAEval
 
 def get_data(ptdata):
     if type(ptdata) == type(list()):
@@ -184,6 +187,35 @@ def assignment2sets(assigns, idx):
 
     return Variable(torch.from_numpy(batch_assigns)).long().t() # [max_k, B]
 
+def vqa_evaluate(prediction_json_path, logger, small_set=True):
+    # set up file names and paths
+    annFile  = "data/VQA_v2.0/annotations/v2_mscoco_val2014_annotations.json"
+    quesFile = "data/VQA_v2.0/annotations/v2_OpenEnded_mscoco_val2014_questions.json"
+
+    # create vqa object and vqaRes object
+    vqa = VQA(annFile, quesFile)
+    num_all_examples = len(vqa.qa)
+    vqaRes = vqa.loadRes(prediction_json_path, quesFile, small_set)
+    num_eval_examples = len(vqa.qa)
+
+    # create vqaEval object by taking vqa and vqaRes
+    # n is precision of accuracy (number of places after decimal), default is 2
+    vqaEval = VQAEval(vqa, vqaRes, n=2)
+
+    # evaluate results
+    if small_set:
+        # If you have a list of question ids on which you would like to evaluate
+        # your results, pass it as a list to below function. By default it uses
+        # all the question ids in annotation file.
+        resAnns = json.load(open(prediction_json_path))
+        qstIds = [int(qst['question_id']) for qst in resAnns]
+        vqaEval.evaluate(qstIds)
+        logger.info("Accuracy on subset is: %.02f" % (vqaEval.accuracy['overall']))
+        logger.info("Accuracy on all examples is: %.02f\n" %
+              (vqaEval.accuracy['overall']*num_eval_examples/num_all_examples))
+    else:
+        vqaEval.evaluate()
+        logger.info("Accuracy is: %.02f" % (vqaEval.accuracy['overall']))
 
 
 """ DEPRECATED """
