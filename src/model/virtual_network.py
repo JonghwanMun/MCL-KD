@@ -76,7 +76,7 @@ class VirtualNetwork(nn.Module):
 
         if self.optimizer == None:
             self.optimizer = torch.optim.Adam(self.get_parameters(), lr=lr)
-            self.optimizer.zero_grad() # set gradients as zero before updating the network
+            self.optimizer.zero_grad() # set gradients as zero before update
 
         self.it +=1
         loss = loss / self.update_every
@@ -139,6 +139,22 @@ class VirtualNetwork(nn.Module):
         outputs = self.forward(data)
         loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
         return [loss, *outputs]
+
+    def predict(self, batch):
+        """ Compute only network's output
+        Args:
+            batch: list of two components [inputs for network, image information]
+                - inputs for network: should be tensors
+        """
+
+        # convert data (tensors) as Variables
+        if self.is_main_net:
+            self.cur_qids = batch[1]
+            data = self.tensor2variable(batch)
+            self.qsts = net_utils.get_data(data[1])
+
+        outputs = self.forward(data)
+        return [*outputs]
 
     def tensor2variable(self, tensors):
         """ Convert tensors to variables

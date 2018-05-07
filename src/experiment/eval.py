@@ -40,7 +40,8 @@ def _get_argument_params():
 def main(params):
 
     # load configuration of pre-trained models
-    exp_path = os.path.join("results", params["dataset"], params["model_type"], params["exp"])
+    exp_path = os.path.join("results", params["dataset"],
+                            params["model_type"], params["exp"])
     config_path = os.path.join(exp_path, "config.yml")
     config = io_utils.load_yaml(config_path)
     params["config_path"] = config_path
@@ -85,7 +86,7 @@ def main(params):
                 net.apply_curriculum_learning()
 
             cmf.evaluate(config, L, net, epoch-1, logger_name="eval", mode="Evaluation", verbose_every=100)
-            net.save_results(sample_data, "epoch_{:03d}".format(epoch))
+
     elif params["mode"] == "selection":
         epoch = params["start_epoch"]
         """ Build network """

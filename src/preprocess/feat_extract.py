@@ -32,7 +32,8 @@ def _get_feat_path(args, img_path):
     if args.data_type == "h5py":
         feat_path = img_path.split("/")[-1][:-4]
     elif args.data_type == "numpy":
-        feat_path = _convert_ext_from_img_to_np(args.save_dir + img_path)
+        feat_path = _convert_ext_from_img_to_np(
+            os.path.join(args.save_dir, img_path))
     else:
         feat_path = "NONE"
     return feat_path
@@ -69,10 +70,12 @@ def main():
 
     # create save_dir if not exists
     io_utils.check_and_create_dir(args.save_dir)
+    """
     if args.data_type == "numpy":
         io_utils.check_and_create_dir(os.path.join(args.save_dir, "train2014"))
         io_utils.check_and_create_dir(os.path.join(args.save_dir, "test2014"))
         io_utils.check_and_create_dir(os.path.join(args.save_dir, "val2014"))
+    """
 
     # build (or load) network
     M = resnet.resnet101(pretrained=True)   # TODO: remove some layers
@@ -143,11 +146,12 @@ def main():
                 else:
                     raise NotImplementedError("Not supported data type ({})".format(args.data_type))
                 n += 1
-                if args.debug_mode and ((n+1) % 100 == 0):
+                if args.debug_mode and ((n+1) % 5000 == 0):
                     print("{}th feature is saved in {}".format(i+1, feat_path_list[-1]))
-                    print(feats[0].shape)
-                    print("max value: ", np.max(feats[0].numpy()))
-                    print("min value: ", np.min(feats[0].numpy()))
+                    if args.debug_mode and ((n+1) % 20000 == 0):
+                        print(feats[0].shape)
+                        print("max value: ", np.max(feats[0]))
+                        print("min value: ", np.min(feats[0]))
 
             # initialize batch index
             bi = 0

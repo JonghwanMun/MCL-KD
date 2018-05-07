@@ -241,8 +241,7 @@ class VQA():
         print("The size of total vocabulary: {}".format( \
                 len(self.word_vocabulary["total"])))
 
-    def SamplingQuestionsAnnotationsWithFrequentAnswers(self,
-            answer_vocabulary=None):
+    def SamplingQuestionsAnnotationsWithFrequentAnswers(self, answer_vocabulary=None):
         if answer_vocabulary == None :
             answer_vocabulary = self.word_vocabulary["answer"]
         tmp_questions = []
@@ -497,6 +496,9 @@ class DataSet(data.Dataset):
             answer = hdf5_file["most_frequent_answer_labels"][idx]
             answer = torch.from_numpy(np.asarray([answer])).long()
 
+        elif self.fetching_answer_option == "only_question":
+            # we use garbage answer (of 1)
+            answer = torch.from_numpy(np.asarray([1])).long()
         else:
             raise ValueError("Not supported fetching answer option ({})".format(
                 self.fetching_answer_option))
@@ -545,20 +547,24 @@ class DataSet(data.Dataset):
             sample = self.__getitem__(idx)
 
             # TODO
-            cur_answer_label = sample[-2][0][0]
-            random_prob = np.random.rand(1)[0]
-            if random_prob < 0.001:
-                sample_answers.append(cur_answer_label)
+            if self.fetching_answer_option == "only_question":
                 samples.append([*sample[:-1], img_filename])
                 cur_num_samples += 1
             else:
-                # we get samples with different answers
-                if cur_answer_label in sample_answers:
-                    continue
-                else:
+                cur_answer_label = sample[-2][0][0]
+                random_prob = np.random.rand(1)[0]
+                if random_prob < 0.001:
                     sample_answers.append(cur_answer_label)
                     samples.append([*sample[:-1], img_filename])
                     cur_num_samples += 1
+                else:
+                    # we get samples with different answers
+                    if cur_answer_label in sample_answers:
+                        continue
+                    else:
+                        sample_answers.append(cur_answer_label)
+                        samples.append([*sample[:-1], img_filename])
+                        cur_num_samples += 1
 
             if cur_num_samples == num_samples:
                 break

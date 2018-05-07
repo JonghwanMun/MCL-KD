@@ -173,9 +173,10 @@ class VirtualVQANetwork(VirtualNetwork):
         save_json_path = os.path.join(save_dir, prefix+".json")
         io_utils.write_json(save_json_path, self.all_predictions)
 
-        if (self.config["misc"]["dataset"] == "vqa") and (mode == "eval"):
-            net_utils.vqa_evaluate(
-                save_json_path, self.logger["epoch"], small_set=True)
+        if (self.config["misc"]["dataset"] == "vqa") and (mode == "eval") \
+                and (self.config["test_loader"]["fetching_answer_option"] != "only_question"):
+            net_utils.vqa_evaluate(save_json_path, self.logger["epoch"],
+                                   self.config["test_loader"], small_set=True)
 
     """ methods for counters """
     def _create_counters(self):
@@ -245,41 +246,57 @@ class VirtualVQANetwork(VirtualNetwork):
         self.gt_list.append(gts.clone().cpu().numpy())
 
     """ methods for metrics """
-    def compute_top1_accuracy(self, logits, gts):
+    def compute_top1_predictions(self, logits):
         """ Compute Top-1 Accuracy
         Args:
             logits: list of m * [batch_size, num_answers]
-            gts: ground-truth answers [batch_size]
         """
         if self.classname == "ENSEMBLE":
             # compute probabilities and average them
             B = logits[0].size(0)
             if self.prob_list == None:
                 self.prob_list = [F.softmax(logit, dim=1) for logit in logits]
-                self.probs = torch.stack([prob for prob in self.prob_list], 0) # [m, B, num_answers]
-                # compute accuracy using max-pooling
-                max_probs, _ = torch.max(self.probs, dim=0)
-                v, idx = net_utils.get_data(max_probs).max(dim=1)
-                num_correct = torch.sum(torch.eq(idx, gts))
-                self.status["top1-max"] = num_correct / B
-                self.counters["top1-max"].add(num_correct, B)
-                # applying avg-pooling
-                self.probs = torch.mean(self.probs, dim=0) # [B, num_answers]
+                probs = torch.stack([prob for prob in self.prob_list], 0) # [m, B, num_answers]
+                probs = torch.mean(probs, dim=0) # [B, num_answers]
 
         else:
             B = logits.size(0)
+            probs = F.softmax(logits, dim=1)
             if type(self.probs) == type(None):
-                self.probs = F.softmax(logits, dim=1)
+                self.probs = probs
 
         # count the number of correct predictions
-        val, max_idx = net_utils.get_data(self.probs).max(dim=1)
-        num_correct = torch.sum(torch.eq(max_idx, gts))
+        val, max_idx = net_utils.get_data(probs).max(dim=1)
 
         # save top1-related status
-        self.status["top1-avg"] = num_correct / B
         self.top1_predictions = max_idx
-        self.top1_gt = utils.label2string(self.itoa, gts[0])
+
+        return max_idx, B
+
+    def compute_top1_accuracy(self, logits, gts):
+        """ Compute Top-1 Accuracy
+        Args:
+            logits: list of m * [batch_size, num_answers]
+            gts: ground-truth answers [batch_size]
+        """
+        max_idx, B = self.compute_top1_predictions(logits)
+        num_correct = torch.sum(torch.eq(max_idx, gts))
+        self.status["top1-avg"] = num_correct / B
         self.counters["top1-avg"].add(num_correct, B)
+        self.top1_gt = utils.label2string(self.itoa, gts[0])
+
+        if self.classname == "ENSEMBLE":
+            # compute probabilities and average them
+            B = logits[0].size(0)
+            self.probs = torch.stack([prob for prob in self.prob_list], 0) # [m, B, num_answers]
+            # compute accuracy using max-pooling
+            max_probs, _ = torch.max(self.probs, dim=0)
+            v, idx = net_utils.get_data(max_probs).max(dim=1)
+            num_correct = torch.sum(torch.eq(idx, gts))
+            self.status["top1-max"] = num_correct / B
+            self.counters["top1-max"].add(num_correct, B)
+            # applying avg-pooling
+            self.probs = torch.mean(self.probs, dim=0) # [B, num_answers]
 
         # count the number of correct predictions and save them for each model
         if self.classname == "ENSEMBLE" \

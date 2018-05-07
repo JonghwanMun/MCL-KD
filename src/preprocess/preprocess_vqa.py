@@ -82,6 +82,8 @@ def EncodeQuestionAnswer(questions, annotations, max_question_length, wtoi, \
     num_second_answer = 0
     qst_word_set = wtoi.keys()
     ans_word_set = atoi.keys()
+    itoa = {i:a for  a,i in atoi.items()}
+    null_answer = itoa[len(wtoi)-1]
     for n, (q, a) in tqdm(enumerate(zip(questions, annotations))):
         question_length[n] = min(max_question_length, q['question_length'])
         if use_right_align:
@@ -103,9 +105,10 @@ def EncodeQuestionAnswer(questions, annotations, max_question_length, wtoi, \
         if not only_qst:
             # Extract most frequent answer
             nth_most_ans = a['multiple_choice_answer']
-            if only_qst and (not nth_most_ans in ans_word_set):
+            if not nth_most_ans in ans_word_set:
                 # this is entered only when question_filter_option is only_questions
-                most_frequent_answer_labels[n] = 1
+                most_frequent_answer_labels[n] = len(atoi)-1
+                nth_most_ans = null_answer
             else:
                 most_frequent_answer_labels[n] = atoi[nth_most_ans]
 
@@ -206,11 +209,18 @@ def main(params):
     # Sample questions where the corresponding answers are in answer vocabulary
     if params.question_filter_option == 'only_questions':
         only_qst = True
+    elif params.question_filter_option == 'all_questions':
+        # TODO:
+        only_qst = False
     else:
         dts.SamplingQuestionsAnnotationsWithFrequentAnswers()
         only_qst = False
+
     # Encode question and answer.
     if params.question_filter_option == 'only_questions':
+        question_subset_name = params.question_filter_option
+        questions, annotations = dts.GetQuestionsAndAnnotations()
+    elif params.question_filter_option == 'all_questions':
         question_subset_name = params.question_filter_option
         questions, annotations = dts.GetQuestionsAndAnnotations()
     elif params.question_filter_option == 'all_questions_with_answer_vocab':

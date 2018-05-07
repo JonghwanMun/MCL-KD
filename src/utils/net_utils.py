@@ -187,35 +187,43 @@ def assignment2sets(assigns, idx):
 
     return Variable(torch.from_numpy(batch_assigns)).long().t() # [max_k, B]
 
-def vqa_evaluate(prediction_json_path, logger, small_set=True):
+def vqa_evaluate(prediction_json_path, logger, config, small_set=True):
     # set up file names and paths
-    annFile  = "data/VQA_v2.0/annotations/v2_mscoco_val2014_annotations.json"
-    quesFile = "data/VQA_v2.0/annotations/v2_OpenEnded_mscoco_val2014_questions.json"
+    #ann_path  = "data/VQA_v2.0/annotations/v2_mscoco_val2014_annotations.json"
+    #qst_path = "data/VQA_v2.0/annotations/v2_OpenEnded_mscoco_val2014_questions.json"
+    if "vqa_eval_annotation_path" in config.keys():
+        ann_path  = config["vqa_eval_annotation_path"]
+    else:
+        ann_path = "data/VQA_v2.0/annotations/v2_mscoco_val2014_annotations.json"
+    if "vqa_eval_question_path" in config.keys():
+        qst_path = config["vqa_eval_question_path"]
+    else:
+        qst_path = "data/VQA_v2.0/annotations/v2_OpenEnded_mscoco_val2014_questions.json"
 
-    # create vqa object and vqaRes object
-    vqa = VQA(annFile, quesFile)
+    # create vqa object and vqa_res object
+    vqa = VQA(ann_path, qst_path)
     num_all_examples = len(vqa.qa)
-    vqaRes = vqa.loadRes(prediction_json_path, quesFile, small_set)
+    vqa_res = vqa.loadRes(prediction_json_path, qst_path, small_set)
     num_eval_examples = len(vqa.qa)
 
-    # create vqaEval object by taking vqa and vqaRes
+    # create vqa_eval object by taking vqa and vqa_res
     # n is precision of accuracy (number of places after decimal), default is 2
-    vqaEval = VQAEval(vqa, vqaRes, n=2)
+    vqa_eval = VQAEval(vqa, vqa_res, n=2)
 
     # evaluate results
     if small_set:
         # If you have a list of question ids on which you would like to evaluate
         # your results, pass it as a list to below function. By default it uses
         # all the question ids in annotation file.
-        resAnns = json.load(open(prediction_json_path))
-        qstIds = [int(qst['question_id']) for qst in resAnns]
-        vqaEval.evaluate(qstIds)
-        logger.info("Accuracy on subset is: %.02f" % (vqaEval.accuracy['overall']))
+        res_ann = json.load(open(prediction_json_path))
+        qst_ids = [int(qst['question_id']) for qst in res_ann]
+        vqa_eval.evaluate(qst_ids)
+        logger.info("Accuracy on subset is: %.02f" % (vqa_eval.accuracy['overall']))
         logger.info("Accuracy on all examples is: %.02f\n" %
-              (vqaEval.accuracy['overall']*num_eval_examples/num_all_examples))
+              (vqa_eval.accuracy['overall']*num_eval_examples/num_all_examples))
     else:
-        vqaEval.evaluate()
-        logger.info("Accuracy is: %.02f" % (vqaEval.accuracy['overall']))
+        vqa_eval.evaluate()
+        logger.info("Accuracy is: %.02f" % (vqa_eval.accuracy['overall']))
 
 
 """ DEPRECATED """
