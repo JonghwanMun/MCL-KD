@@ -2,7 +2,7 @@
 
 from __future__ import print_function, division
 import sys
-dataDir = 'externals/VQA_evaluation_APIs'
+dataDir = 'src/externals/VQA_evaluation_APIs'
 sys.path.insert(0, '%s/PythonHelperTools/vqaTools' %(dataDir))
 sys.path.append('%s/PythonEvaluationTools' %(dataDir))
 import os
@@ -48,12 +48,12 @@ def main():
         # all the question ids in annotation file.
         resAnns = json.load(open(args.prediction_json_path))
         qstIds = [int(qst['question_id']) for qst in resAnns]
-        vqaEval.evaluate(qstIds)
+        acc_per_qstid = vqaEval.evaluate(qstIds)
         print("Accuracy on subset is: %.02f" % (vqaEval.accuracy['overall']))
         print("Accuracy on all examples is: %.02f\n" %
               (vqaEval.accuracy['overall']*num_eval_examples/num_all_examples))
     else:
-        vqaEval.evaluate()
+        acc_per_qstid = vqaEval.evaluate()
         print("Accuracy is: %.02f" % (vqaEval.accuracy['overall']))
 
 

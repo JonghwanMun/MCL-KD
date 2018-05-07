@@ -248,7 +248,7 @@ class Ensemble(VirtualVQANetwork):
                 #self.visualize_assignments(prefix=prefix, mode=mode)
 
         """ given sample data """
-        if data is not None:
+        if (data is not None) and (self.config["misc"]["dataset"] != "vqa"):
             # maintain sample data
             self._set_sample_data(data)
 
@@ -337,8 +337,13 @@ class Ensemble(VirtualVQANetwork):
         self.gt_list = []
         self.all_predictions = []
         self.base_pred_all_list = []
+        if self.config["misc"]["dataset"] == "vqa":
+            self.base_top1_predictions = []
+            self.base_all_predictions = []
         for m in range(self.config["model"]["num_models"]):
             self.base_pred_all_list.append([])
+            if self.config["misc"]["dataset"] == "vqa":
+                self.base_all_predictions.append([])
 
         # initialize question_ids and assignments
         self.qst_ids_list = []
@@ -1052,6 +1057,68 @@ class SharedSAAA(VirtualVQANetwork):
         # for classigication layer
         m_config["answer_mlp_inp_dim"] = m_config["rnn_hidden_dim"] \
                 + (m_config["img_emb_dim"] * m_config["num_stacks"])
+        m_config["answer_mlp_out_dim"] = m_config["num_labels"]
+
+        return config
+
+class OnlyQuestion(VirtualVQANetwork):
+    def __init__(self, config, verbose=True):
+        super(OnlyQuestion, self).__init__(config, verbose) # Must call super __init__()
+
+        self.classname = "ONLYQUESTION"
+        self.use_gpu = utils.get_value_from_dict(
+            config["model"], "use_gpu", True)
+        loss_reduce = utils.get_value_from_dict(
+            config["model"], "loss_reduce", True)
+
+        ckpt_path = utils.get_value_from_dict(
+            config["model"], "checkpoint_path", True)
+
+        # build layers
+        self.qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
+        self.classifier = building_blocks.MLP(config["model"], "answer")
+        self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
+
+        # set layer names (all and to be updated)
+        self.model_list = ["qst_emb_net", "classifier", "criterion"]
+        self.models_to_update = ["qst_emb_net", "classifier", "criterion"]
+
+        # maintain model configuration
+        self.config = config
+
+    def forward(self, data):
+        """ Forward network
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels]
+        Returns:
+            logits: logits of network which is an input of criterion
+            others: intermediate values (e.g. attention weights)
+        """
+        # forward network
+        qst_feats = self.qst_emb_net(data[1], data[2])
+        # concatenate attended feature and question feat
+        self.logits = self.classifier(qst_feats) # criterion input
+
+        criterion_inp = self.logits
+        out = [criterion_inp]
+        return out
+
+    def save_results(self, data, prefix, mode="train", compute_loss=False):
+        """ Get qualitative results (attention weights) and save them
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
+        """
+        # save predictions
+        self.save_predictions(prefix, mode)
+
+    @classmethod
+    def model_specific_config_update(cls, config):
+        assert type(config) == type(dict()), \
+            "Configuration shuold be dictionary"
+
+        m_config = config["model"]
+        # for classigication layer
+        m_config["answer_mlp_inp_dim"] = m_config["rnn_hidden_dim"]
         m_config["answer_mlp_out_dim"] = m_config["num_labels"]
 
         return config

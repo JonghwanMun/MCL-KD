@@ -864,10 +864,26 @@ class EnsembleLoss(nn.Module):
                 idx = net_utils.get_data(min_idx) # [1,B]
                 prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
                              for logit in logit_list] # m*[B,C]
+                probs = torch.mean(torch.stack(prob_list, 0 ), dim=0) # [B, num_answers]
+                val, max_idx = probs.max(dim=1)
+                correct_mask = torch.eq(max_idx, labels)
 
-                new_assignment = -torch.ones((self.m, B))
-                new_assignment[0] = idx
-                assignment_mask = torch.zeros((B, self.m)).scatter_(1, idx.view(-1,1), 1).t()
+                new_assignment = -torch.ones((B, self.m))
+                new_assignment[:,0] = idx
+                assignment_mask = torch.zeros((B, self.m)).scatter_(1, idx.view(-1,1), 1)
+
+                if correct_mask.sum().data[0] != B:
+                    wrong_idx = net_utils.get_data((correct_mask==0).nonzero().squeeze())
+
+                    all_assign = torch.arange(self.m).view(1,-1).expand(B,-1)
+                    new_assignment[wrong_idx] = all_assign[wrong_idx]
+
+                    ones = torch.ones(B, self.m)
+                    assignment_mask[wrong_idx] = ones[wrong_idx]
+
+                new_assignment = new_assignment.t()
+                assignment_mask = assignment_mask.t()
+                """
                 for bi in range(B):
                     ii = 0
                     assigned_idx = idx[0,bi]
@@ -885,6 +901,7 @@ class EnsembleLoss(nn.Module):
                                 ii += 1
                                 new_assignment[ii, bi] = mi
                                 assignment_mask[mi, bi] = 1
+                """
                 min_idx = Variable(new_assignment).long()
                 assignment_mask = Variable(assignment_mask).cuda() if self.use_gpu \
                         else Variable(assignment_mask)

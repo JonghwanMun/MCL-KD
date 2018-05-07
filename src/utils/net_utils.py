@@ -13,11 +13,17 @@ from src.utils import accumulator, utils, io_utils, net_utils
 from src.externals.VQA_evaluation_APIs.PythonHelperTools.vqaTools.vqa import VQA
 from src.externals.VQA_evaluation_APIs.PythonEvaluationTools.vqaEvaluation.vqaEval import VQAEval
 
-def get_data(ptdata):
-    if type(ptdata) == type(list()):
-        return [dt.clone().cpu().data for dt in ptdata]
+def get_data(ptdata, to_clone=True):
+    if to_clone:
+        if type(ptdata) == type(list()):
+            return [dt.clone().cpu().data for dt in ptdata]
+        else:
+            return ptdata.clone().cpu().data
     else:
-        return ptdata.clone().cpu().data
+        if type(ptdata) == type(list()):
+            return [dt.cpu().data for dt in ptdata]
+        else:
+            return ptdata.cpu().data
 
 def where(cond, x1, x2):
     """ Differentiable equivalent of np.where (or tf.where)
@@ -187,7 +193,7 @@ def assignment2sets(assigns, idx):
 
     return Variable(torch.from_numpy(batch_assigns)).long().t() # [max_k, B]
 
-def vqa_evaluate(prediction_json_path, logger, config, small_set=True):
+def vqa_evaluate(prediction_json_path, logger, config, modelname="ENS", small_set=True):
     # set up file names and paths
     #ann_path  = "data/VQA_v2.0/annotations/v2_mscoco_val2014_annotations.json"
     #qst_path = "data/VQA_v2.0/annotations/v2_OpenEnded_mscoco_val2014_questions.json"
@@ -217,13 +223,16 @@ def vqa_evaluate(prediction_json_path, logger, config, small_set=True):
         # all the question ids in annotation file.
         res_ann = json.load(open(prediction_json_path))
         qst_ids = [int(qst['question_id']) for qst in res_ann]
-        vqa_eval.evaluate(qst_ids)
-        logger.info("Accuracy on subset is: %.02f" % (vqa_eval.accuracy['overall']))
-        logger.info("Accuracy on all examples is: %.02f\n" %
-              (vqa_eval.accuracy['overall']*num_eval_examples/num_all_examples))
+        acc_per_qstid = vqa_eval.evaluate(qst_ids)
+        logger.info("[{}] Accuracy on subset is: {:.02f}".format(
+            modelname, vqa_eval.accuracy['overall']))
+        logger.info("[{}] Accuracy on all examples is: {:.02f}".format(
+              modelname, vqa_eval.accuracy['overall']*num_eval_examples/num_all_examples))
     else:
-        vqa_eval.evaluate()
+        acc_per_qstid = vqa_eval.evaluate()
         logger.info("Accuracy is: %.02f" % (vqa_eval.accuracy['overall']))
+
+    return acc_per_qstid
 
 
 """ DEPRECATED """

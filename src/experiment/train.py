@@ -124,7 +124,7 @@ def train(config):
             tm.reset()
 
             if config["misc"]["debug"]:
-                if ii % 20 == 0:
+                if ii % 1 == 0:
                     break
             # epoch done
 

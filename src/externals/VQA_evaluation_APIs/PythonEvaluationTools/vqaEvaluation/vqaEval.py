@@ -4,8 +4,9 @@ __author__='aagrawal'
 
 # This code is based on the code written by Tsung-Yi Lin for MSCOCO Python API available at the following link:
 # (https://github.com/tylin/coco-caption/blob/master/pycocoevalcap/eval.py).
-import sys
 import re
+import sys
+import pdb
 
 class VQAEval:
     def __init__(self, vqa, vqaRes, n=2):
@@ -80,6 +81,7 @@ class VQAEval:
         accQA       = []
         accQuesType = {}
         accAnsType  = {}
+        accPerQstId = {}
         print ("computing accuracy")
         step = 0
         for quesId in quesIds:
@@ -103,6 +105,7 @@ class VQAEval:
             ansType     = gts[int(quesId)]['answer_type']
             avgGTAcc = float(sum(gtAcc))/len(gtAcc)
             accQA.append(avgGTAcc)
+            accPerQstId[quesId] = avgGTAcc
             if quesType not in accQuesType:
                 accQuesType[quesType] = []
             accQuesType[quesType].append(avgGTAcc)
@@ -118,6 +121,8 @@ class VQAEval:
 
         self.setAccuracy(accQA, accQuesType, accAnsType)
         print ("Done computing accuracy")
+
+        return accPerQstId
 
     def processPunctuation(self, inText):
         outText = inText

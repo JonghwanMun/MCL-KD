@@ -26,6 +26,8 @@ def get_model(base_model_type):
         M = getattr(building_networks, "Ensemble")
     elif base_model_type in ["infer", "INFER"]:
         M = getattr(building_networks, "EnsembleInference")
+    elif base_model_type in ["onlyqst", "ONLYQST"]:
+        M = getattr(building_networks, "OnlyQuestion")
     else:
         raise NotImplementedError("Not supported model type ({})".format(base_model_type))
     return M
@@ -112,7 +114,7 @@ def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verb
         ii += 1
         tm.reset()
 
-        if (config["misc"]["debug"]) and (ii > 5):
+        if (config["misc"]["debug"]) and (ii > 0):
             break
         # end for batch in loader
 

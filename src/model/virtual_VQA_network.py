@@ -167,6 +167,15 @@ class VirtualVQANetwork(VirtualNetwork):
                 "answer": utils.label2string(self.itoa, self.top1_predictions[i])
             })
 
+            if self.config["misc"]["dataset"] == "vqa":
+                for m in range(self.num_models):
+                    self.base_all_predictions[m].append({
+                        "question_id": qid,
+                        "answer": utils.label2string(
+                            self.itoa, self.base_top1_predictions[m][i])
+                    })
+
+
     def save_predictions(self, prefix, mode):
         save_dir = os.path.join(self.config["misc"]["result_dir"], "predictions", mode)
         io_utils.check_and_create_dir(save_dir)
@@ -175,8 +184,24 @@ class VirtualVQANetwork(VirtualNetwork):
 
         if (self.config["misc"]["dataset"] == "vqa") and (mode == "eval") \
                 and (self.config["test_loader"]["fetching_answer_option"] != "only_question"):
-            net_utils.vqa_evaluate(save_json_path, self.logger["epoch"],
-                                   self.config["test_loader"], small_set=True)
+            acc_per_qstid = net_utils.vqa_evaluate(save_json_path, self.logger["epoch"],
+                                   self.config["test_loader"], "ENS", small_set=True)
+
+            base_acc_per_qstid = []
+            for m in range(self.num_models):
+                save_json_path = os.path.join(save_dir, (prefix+"_M{}.json").format(m))
+                io_utils.write_json(save_json_path, self.base_all_predictions[m])
+                base_acc_per_qstid.append(net_utils.vqa_evaluate(
+                    save_json_path, self.logger["epoch"],
+                    self.config["test_loader"], "M{}".format(m), small_set=True)
+                )
+            # compute oracle accuracy with VQA measure
+            qst_ids = base_acc_per_qstid[0].keys()
+            oracle_acc_per_qstid = [max([base_acc_per_qstid[m][qst_id] \
+                    for m in range(self.num_models)]) for qst_id in qst_ids]
+            self.logger["epoch"].info("Oracle Accuracy: {:.2f}".format(
+                    float(sum(oracle_acc_per_qstid))/len(oracle_acc_per_qstid)
+                ))
 
     """ methods for counters """
     def _create_counters(self):
@@ -256,8 +281,7 @@ class VirtualVQANetwork(VirtualNetwork):
             B = logits[0].size(0)
             if self.prob_list == None:
                 self.prob_list = [F.softmax(logit, dim=1) for logit in logits]
-                probs = torch.stack([prob for prob in self.prob_list], 0) # [m, B, num_answers]
-                probs = torch.mean(probs, dim=0) # [B, num_answers]
+                probs = torch.mean(torch.stack(self.prob_list, 0 ), dim=0) # [B, num_answers]
 
         else:
             B = logits.size(0)
@@ -295,7 +319,7 @@ class VirtualVQANetwork(VirtualNetwork):
             num_correct = torch.sum(torch.eq(idx, gts))
             self.status["top1-max"] = num_correct / B
             self.counters["top1-max"].add(num_correct, B)
-            # applying avg-pooling
+            # maintain average probability as ensembled probability
             self.probs = torch.mean(self.probs, dim=0) # [B, num_answers]
 
         # count the number of correct predictions and save them for each model
@@ -323,12 +347,15 @@ class VirtualVQANetwork(VirtualNetwork):
         # compute oracle accuracy
         if self.prob_list == None:
             self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
-        for ii in range(len(self.prob_list)):
-            val, idx = self.prob_list[ii].max(dim=1)
-            if ii == 0:
-                correct_mask = torch.eq(idx.cpu().data, gts)
+        for m in range(self.num_models):
+            val, idx = self.prob_list[m].max(dim=1)
+            idx = net_utils.get_data(idx, to_clone=False)
+            if self.config["misc"]["dataset"] == "vqa":
+                self.base_top1_predictions.append(idx)
+            if m == 0:
+                correct_mask = torch.eq(idx, gts)
             else:
-                correct_mask += torch.eq(idx.cpu().data, gts)
+                correct_mask += torch.eq(idx, gts)
         correct_mask = correct_mask.clamp(min=0, max=1)
         num_correct = correct_mask.sum()
 

@@ -426,6 +426,7 @@ class DataSet(data.Dataset):
                     config, "feat_path", "data/VQA_v2.0/feats/resnet_conv4_feats/img_feats.h5")
         self.fetching_answer_option = utils.get_value_from_dict(
                 config, "fetching_answer_option", "sampling")
+        self.only_question = utils.get_value_from_dict(config, "only_question", False)
 
         # load hdf5 file including question_labels, question_length,
         # answer_labels
@@ -456,21 +457,24 @@ class DataSet(data.Dataset):
 
         # obtain image (in raw or feature)
         img_filename = self.json_file["image_filenames"][idx]
-        if self.use_img:
-            img_path = os.path.join(self.img_dir, img_filename)
-            img = Image.open(img_path).convert("RGB")
-            img = self.prepro(img)
-
+        if self.only_question:
+            img = torch.zeros(1)
         else:
-            if self.feat_type == "numpy":
-                feat_path = os.path.join(self.feat_dir, \
-                        img_filename.replace(".jpg", ".npy"))
-                img = np.load(feat_path)
+            if self.use_img:
+                img_path = os.path.join(self.img_dir, img_filename)
+                img = Image.open(img_path).convert("RGB")
+                img = self.prepro(img)
+
             else:
-                feat_hdf5 = io_utils.load_hdf5(self.feat_path, verbose=False)
-                feat_key = img_filename.split("/")[-1][:-4]
-                img = feat_hdf5[feat_key]
-            img = torch.Tensor(img)
+                if self.feat_type == "numpy":
+                    feat_path = os.path.join(self.feat_dir, \
+                            img_filename.replace(".jpg", ".npy"))
+                    img = np.load(feat_path)
+                else:
+                    feat_hdf5 = io_utils.load_hdf5(self.feat_path, verbose=False)
+                    feat_key = img_filename.split("/")[-1][:-4]
+                    img = feat_hdf5[feat_key]
+                img = torch.Tensor(img)
 
         # obtain question label and its length
         hdf5_file = io_utils.load_hdf5(self.hdf5_path, verbose=False)
@@ -496,7 +500,7 @@ class DataSet(data.Dataset):
             answer = hdf5_file["most_frequent_answer_labels"][idx]
             answer = torch.from_numpy(np.asarray([answer])).long()
 
-        elif self.fetching_answer_option == "only_question":
+        elif self.fetching_answer_option == "without_answer":
             # we use garbage answer (of 1)
             answer = torch.from_numpy(np.asarray([1])).long()
         else:
@@ -547,7 +551,7 @@ class DataSet(data.Dataset):
             sample = self.__getitem__(idx)
 
             # TODO
-            if self.fetching_answer_option == "only_question":
+            if self.fetching_answer_option == "without_answer":
                 samples.append([*sample[:-1], img_filename])
                 cur_num_samples += 1
             else:
