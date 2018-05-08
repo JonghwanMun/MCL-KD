@@ -167,7 +167,8 @@ class VirtualVQANetwork(VirtualNetwork):
                 "answer": utils.label2string(self.itoa, self.top1_predictions[i])
             })
 
-            if self.config["misc"]["dataset"] == "vqa":
+            if (self.classname == "ENSEMBLE") and \
+                    (self.config["misc"]["dataset"] == "vqa"):
                 for m in range(self.num_models):
                     self.base_all_predictions[m].append({
                         "question_id": qid,
@@ -187,22 +188,22 @@ class VirtualVQANetwork(VirtualNetwork):
             acc_per_qstid = net_utils.vqa_evaluate(save_json_path, self.logger["epoch"],
                                    self.config["test_loader"], "ENS", small_set=True)
 
-            base_acc_per_qstid = []
-            for m in range(self.num_models):
-                save_json_path = os.path.join(save_dir, (prefix+"_M{}.json").format(m))
-                io_utils.write_json(save_json_path, self.base_all_predictions[m])
-                base_acc_per_qstid.append(net_utils.vqa_evaluate(
-                    save_json_path, self.logger["epoch"],
-                    self.config["test_loader"], "M{}".format(m), small_set=True)
-                )
-            # compute oracle accuracy with VQA measure
-            qst_ids = base_acc_per_qstid[0].keys()
-            oracle_acc_per_qstid = [max([base_acc_per_qstid[m][qst_id] \
-                    for m in range(self.num_models)]) for qst_id in qst_ids]
-            self.logger["epoch"].info("[ENS] Oracle Accuracy: {:.02f}".format(
-                    100*float(sum(oracle_acc_per_qstid))/len(oracle_acc_per_qstid)
-                ))
-            pdb.set_trace()
+            if (self.classname == "ENSEMBLE"):
+                base_acc_per_qstid = []
+                for m in range(self.num_models):
+                    save_json_path = os.path.join(save_dir, (prefix+"_M{}.json").format(m))
+                    io_utils.write_json(save_json_path, self.base_all_predictions[m])
+                    base_acc_per_qstid.append(net_utils.vqa_evaluate(
+                        save_json_path, self.logger["epoch"],
+                        self.config["test_loader"], "M{}".format(m), small_set=True)
+                    )
+                # compute oracle accuracy with VQA measure
+                qst_ids = base_acc_per_qstid[0].keys()
+                oracle_acc_per_qstid = [max([base_acc_per_qstid[m][qst_id] \
+                        for m in range(self.num_models)]) for qst_id in qst_ids]
+                self.logger["epoch"].info("[ENS] Oracle Accuracy: {:.02f}".format(
+                        100*float(sum(oracle_acc_per_qstid))/len(oracle_acc_per_qstid)
+                    ))
 
     """ methods for counters """
     def _create_counters(self):
