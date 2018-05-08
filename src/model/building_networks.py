@@ -338,7 +338,6 @@ class Ensemble(VirtualVQANetwork):
         self.all_predictions = []
         self.base_pred_all_list = []
         if self.config["misc"]["dataset"] == "vqa":
-            self.base_top1_predictions = []
             self.base_all_predictions = []
         for m in range(self.config["model"]["num_models"]):
             self.base_pred_all_list.append([])

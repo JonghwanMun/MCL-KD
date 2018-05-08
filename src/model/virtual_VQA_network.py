@@ -199,9 +199,10 @@ class VirtualVQANetwork(VirtualNetwork):
             qst_ids = base_acc_per_qstid[0].keys()
             oracle_acc_per_qstid = [max([base_acc_per_qstid[m][qst_id] \
                     for m in range(self.num_models)]) for qst_id in qst_ids]
-            self.logger["epoch"].info("Oracle Accuracy: {:.2f}".format(
-                    float(sum(oracle_acc_per_qstid))/len(oracle_acc_per_qstid)
+            self.logger["epoch"].info("[ENS] Oracle Accuracy: {:.02f}".format(
+                    100*float(sum(oracle_acc_per_qstid))/len(oracle_acc_per_qstid)
                 ))
+            pdb.set_trace()
 
     """ methods for counters """
     def _create_counters(self):
@@ -312,7 +313,7 @@ class VirtualVQANetwork(VirtualNetwork):
         if self.classname == "ENSEMBLE":
             # compute probabilities and average them
             B = logits[0].size(0)
-            self.probs = torch.stack([prob for prob in self.prob_list], 0) # [m, B, num_answers]
+            self.probs = torch.stack(self.prob_list, 0) # [m, B, num_answers]
             # compute accuracy using max-pooling
             max_probs, _ = torch.max(self.probs, dim=0)
             v, idx = net_utils.get_data(max_probs).max(dim=1)
@@ -347,6 +348,7 @@ class VirtualVQANetwork(VirtualNetwork):
         # compute oracle accuracy
         if self.prob_list == None:
             self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
+        self.base_top1_predictions = []
         for m in range(self.num_models):
             val, idx = self.prob_list[m].max(dim=1)
             idx = net_utils.get_data(idx, to_clone=False)

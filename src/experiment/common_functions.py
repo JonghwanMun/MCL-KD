@@ -114,7 +114,7 @@ def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verb
         ii += 1
         tm.reset()
 
-        if (config["misc"]["debug"]) and (ii > 0):
+        if (config["misc"]["debug"]) and (ii > 2):
             break
         # end for batch in loader
 
