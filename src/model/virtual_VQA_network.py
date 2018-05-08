@@ -197,8 +197,10 @@ class VirtualVQANetwork(VirtualNetwork):
                 )
             # compute oracle accuracy with VQA measure
             qst_ids = base_acc_per_qstid[0].keys()
+
             oracle_acc_per_qstid = [max([base_acc_per_qstid[m][qst_id] \
                     for m in range(self.num_models)]) for qst_id in qst_ids]
+            pdb.set_trace()
             self.logger["epoch"].info("Oracle Accuracy: {:.2f}".format(
                     float(sum(oracle_acc_per_qstid))/len(oracle_acc_per_qstid)
                 ))

@@ -121,7 +121,8 @@ def add_attention_row_subplot(fig, gc, img, atts, num_stacks, row, col_width=2):
                            ["max ({:.6f})".format(ith_att_weight.max()), \
                             "min ({:.6f})".format(ith_att_weight.min())])
 
-def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row, class_name=None):
+def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row,
+                           class_name=None, is_vqa=False):
     # add ground truth answer
     add_text_to_figure(fig, gc, row, 0, 1, 1, ["GT: {}".format(gt)])
 
@@ -138,10 +139,11 @@ def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row, class_name=None
 
             add_text_to_figure(fig, gc, row+1, 0, 1, 1, top5_predictions,
                                y_loc=0.5, colortype="sequence")
-            add_vector_to_figure(fig, gc, row+1, 6, 1, 3,
-                                 [answer_prob], class_name=class_name)
-            add_vector_to_figure(fig, gc, row+1, 10, 1, 3,
-                                 [logit], class_name=class_name)
+            if not is_vqa:
+                add_vector_to_figure(fig, gc, row+1, 6, 1, 3,
+                                     [answer_prob], class_name=class_name)
+                add_vector_to_figure(fig, gc, row+1, 10, 1, 3,
+                                     [logit], class_name=class_name)
             row += 1
     else:
         # compute probability of answers
@@ -255,19 +257,23 @@ def save_mcl_visualization(config, data, result, class_name, itow, itoa, \
         """ data: list of four components;
             [[inputs for network], img_info, selections, base_predictions]
         """
+        is_vqa = config["misc"]["dataset"] == "vqa"
         logits = [logit[idx] for logit in result]
         if use_base_model:
             for i in range(len(data[3])):
                 logits.append(data[3][i][idx])
         selections = data[2][idx]
-        #add_answer_row_subplot(fig, gc, [logits, selections], gt, itoa, 1, class_name)
-        add_answer_row_subplot(fig, gc, [logits, selections], gt, itoa, 1)
+        #add_answer_row_subplot(fig, gc, [logits, selections],\
+        #                      gt, itoa, 1, class_name)
+        add_answer_row_subplot(fig, gc, [logits, selections],
+                               gt, itoa, 1, is_vqa=is_vqa)
 
         # save figure and close it
         img_filename = utils.get_filename_from_path(img_path)
         img_filename = "{}_{}_{}.png".format(idx, prefix, img_filename)
         #plt.savefig(os.path.join(save_dir, img_filename), bbox_inches="tight", dpi=500)
-        plt.savefig(os.path.join(save_dir, img_filename), bbox_inches="tight", dpi=500)
+        plt.savefig(os.path.join(save_dir, img_filename),
+                    bbox_inches="tight", dpi=500)
         plt.close()
 
 def save_confusion_matrix_visualization(config, cm_list, classes, epoch, prefix, fontsize=2,

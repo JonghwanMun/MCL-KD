@@ -1108,25 +1108,25 @@ class MultipleCriterion(nn.Module):
     def forward(self, inp, labels):
         """
         Args:
-            inp: list of two items: logit list (m * [B, C]) and CrossEntropyLoss list (m * [B,])
+            inp: logits; [B, C]
             labels: list of [answers, all_answers, mask]
                 - answers: do not use this
-                - all_answers: all answers [B, A]
-                - mask: mask of answers [B, A]
+                - all_answers: all answers; [B, A]
+                - mask: mask of answers; [B, A]
         """
         all_labels = labels[1]
         mask = labels[2]
         _, C = inp.size()
         B, A = all_labels.size()
 
-        flat_inp = inp.view(B,1,C).expand(B,A,C).contiguous().view(B*A,C)
+        flat_logit = inp.view(B,1,C).expand(B,A,C).contiguous().view(B*A,C)
         flat_all_labels = all_labels.view(B*A)
 
-        loss = self.criterion(flat_inp, flat_all_labels)
+        loss = self.criterion(flat_logit, flat_all_labels)
         loss = loss * mask.view(B*A)
-        loss = loss.view(B,A).mean(dim=1)
+        loss = loss.view(B,A).mean(dim=1) # [B,]
 
         if self.loss_reduce:
-            loss = loss.mean()
+            loss = loss.mean() # scalar
 
         return loss
