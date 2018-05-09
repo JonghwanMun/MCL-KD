@@ -687,6 +687,33 @@ class SAAA(VirtualVQANetwork):
         if self.use_attention_transfer:
             out.append(att_groups)
         return out
+    
+    def Inference_forward(self, data):
+        """ Forward network
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels]
+        Returns:
+            logits: logits of network which is an input of criterion
+            others: intermediate values (e.g. attention weights)
+        """
+        # forward network
+        # applying l2-norm for img features
+        img_feats = data[0]
+        if self.apply_l2_norm:
+            img_feats = img_feats \
+                / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
+        if self.use_deep_img_emb:
+            img_emb_out = self.img_emb_net(img_feats)
+            img_feats = img_emb_out["feats"]
+            if self.use_attention_transfer:
+                att_groups = img_emb_out["att_groups"]
+        qst_feats = self.qst_emb_net(data[1], data[2])
+        saaa_outputs = self.saaa(qst_feats, img_feats) # [ctx, att list]
+        # concatenate attended feature and question feat
+        multimodal_feats = torch.cat((saaa_outputs[0], qst_feats), 1)
+        self.logits = self.classifier.Inference_forward(multimodal_feats) # criterion input
+        criterion_inp = self.logits
+        return criterion_inp
 
     def save_results(self, data, prefix, mode="train", compute_loss=False):
         """ Get qualitative results (attention weights) and save them
@@ -923,11 +950,27 @@ class EnsembleInference(VirtualVQANetwork):
         B = data[0].size()[0]
         net_probs = []
         for m in range(self.num_base_models):
-            net_outputs = self.base_model[m](data)
-            if self.use_logit:
-                net_probs.append(net_outputs[0])
+            if self.config["flag_inference"]:
+                net_outputs = self.base_model[m].Inference_forward(data)
+                if self.config["inference_case"] == 1:
+                    index_list = [3, 4]
+                output = 0
+                index_count = 0
+                for i in index_list:
+                    if index_count == 0:
+                        output = net_outputs[i]
+                        index_count =1
+                    else:
+                        output = torch.cat((output, net_outputs[i]), dim=1)
+                print(output.size())
+                net_probs.append(output)
+                self.use_qst_emb_net = False
             else:
-                net_probs.append(F.softmax(net_outputs[0], dim=1))
+                net_outputs = self.base_model[m](data)
+                if self.use_logit:
+                    net_probs.append(net_outputs[0])
+                else:
+                    net_probs.append(F.softmax(net_outputs[0], dim=1))
         if self.use_qst_emb_net:
             qst_feats = self.qst_emb_net(data[1], data[2])
             net_probs.append(qst_feats)
@@ -971,7 +1014,9 @@ class EnsembleInference(VirtualVQANetwork):
         if ("use_qst_emb_net" in m_config.keys()) and m_config["use_qst_emb_net"]:
             m_config["ens_infer_mlp_inp_dim"] = \
                 m_config["ens_infer_mlp_inp_dim"] + m_config["rnn_hidden_dim"]
-
+        if config["flag_inference"]:
+            m_config["ens_infer_mlp_inp_dim"] = config["num_input_for_inference"]
+            
         return config
 
 class OnlyQuestion(VirtualVQANetwork):

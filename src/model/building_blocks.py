@@ -161,6 +161,13 @@ class MLP(nn.Module):
         """
         return self.mlp_1d(inp)
 
+    def Inference_forward(self, inp):
+        output = []
+        for name, module in self.mlp_1d._modules.items():
+            inp = module(inp)
+            output.append(inp)
+        return output
+
 class ResBlock2D(nn.Module):
     def __init__(self, config, name=""):
         super(ResBlock2D, self).__init__() # Must call super __init__()
