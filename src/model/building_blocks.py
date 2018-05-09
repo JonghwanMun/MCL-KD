@@ -1,5 +1,6 @@
 import pdb
 import numpy as np
+import random
 from random import shuffle
 from collections import OrderedDict
 
@@ -634,7 +635,7 @@ class EnsembleLoss(nn.Module):
         self.use_gpu = utils.get_value_from_dict(config, "use_gpu", True)
         self.m = utils.get_value_from_dict(config, "num_models", 3)
         self.num_labels = utils.get_value_from_dict(config, "num_labels", 28)
-        self.print_every = 50
+        self.print_every = 20
         self.log_every = 500
 
         # options for computing assignments
@@ -652,6 +653,11 @@ class EnsembleLoss(nn.Module):
                 "You should set k as 1 if using adaptive assignment ({})".format(self.k)
             self.adaptive_threshold = \
                     utils.get_value_from_dict(config, "adaptive_threshold", 0.8)
+        self.apply_uniform_sampling_k = \
+                utils.get_value_from_dict(config, "apply_uniform_sampling_k", False)
+        if self.apply_uniform_sampling_k:
+            self.sampling_k_every = \
+                utils.get_value_from_dict(config, "sampling_k_every", 1000)
 
         # options for KD-MCL
         self.use_KD_loss_with_ensemble = utils.get_value_from_dict(
@@ -691,6 +697,13 @@ class EnsembleLoss(nn.Module):
         Returns:
             loss: scalar value
         """
+        # increment the iteration number
+        self.iteration += 1
+        if self.apply_uniform_sampling_k and (self.iteration % self.sampling_k_every == 0):
+            txt = "=====> [Iter {}] K is changed from {} to {}".format(
+                    self.iteration, self.k, "{}")
+            self.k = random.randint(1,self.m)
+            self.logger.info(txt.format(self.k))
 
         # for all answers, we just use most frequent answers as ground-truth
         if type(labels) == type(list()):
@@ -967,13 +980,14 @@ class EnsembleLoss(nn.Module):
                 # End
 
             if self.iteration % self.print_every == 0:
+                num_combinations = oracle_loss_tensor.size(0)
                 txt = txt.format( \
                     "/".join("{:.3f}".format(
                         task_loss_tensor[i,0].data[0]) for i in range(self.m)),
                     "/".join("{:6.3f}".format(
                         nonspecialist_loss_tensor[i,0].data[0]) for i in range(self.m)),
                     "/".join("{:6.3f}".format(
-                        oracle_loss_tensor[i,0].data[0]) for i in range(self.m))
+                        oracle_loss_tensor[i,0].data[0]) for i in range(num_combinations))
                     )
                 print(txt, end="")
             if (self.iteration % self.log_every) == 0:
@@ -1018,9 +1032,6 @@ class EnsembleLoss(nn.Module):
             if (self.iteration % self.log_every) == 0:
                 self.logger.info(log_txt + txt)
 
-        # increment the iteration number
-        self.iteration += 1
-
         return total_loss
 
     def compute_kld(self, logit_list, teacher_list):
@@ -1044,6 +1055,7 @@ class EnsembleLoss(nn.Module):
                 for student_logit, teacher_logit \
                 in zip(logit_list, teacher_list)] # m*[B]
         return nonspecialist_loss_list
+
 
 class AttentionTransferLoss(nn.Module):
     def __init__(self, config):
@@ -1074,6 +1086,7 @@ class AttentionTransferLoss(nn.Module):
         B = logit.size(0)
         return F.normalize(logit.pow(2).mean(1).view(B,-1)) # [B, h*w]
 
+
 class KLDLoss(nn.Module):
     def __init__(self, config):
         super(KLDLoss, self).__init__() # Must call super __init__()
@@ -1094,7 +1107,6 @@ class KLDLoss(nn.Module):
         teacher = logits[1]
         return net_utils.compute_kl_div(student, teacher,
                     self.tau, self.apply_softmax_on_teacher, self.reduce)
-
 
 
 class MultipleCriterion(nn.Module):

@@ -338,7 +338,6 @@ class Ensemble(VirtualVQANetwork):
         self.all_predictions = []
         self.base_pred_all_list = []
         if self.config["misc"]["dataset"] == "vqa":
-            self.base_top1_predictions = []
             self.base_all_predictions = []
         for m in range(self.config["model"]["num_models"]):
             self.base_pred_all_list.append([])
@@ -871,20 +870,45 @@ class EnsembleInference(VirtualVQANetwork):
             config["model"], "use_gpu", True)
         loss_reduce = utils.get_value_from_dict(
             config["model"], "loss_reduce", True)
-
         self.use_knowledge_distillation = False
-        ckpt_path = utils.get_value_from_dict(
-            config["model"], "checkpoint_path", True)
+        self.use_logit = utils.get_value_from_dict(
+            config["model"], "use_logit_for_inference", "saaa")
+
+        # options for base model
+        self.base_model_type = utils.get_value_from_dict(
+            config["model"], "base_model_type", "saaa")
+        self.M = cmf.get_model(self.base_model_type)
+        base_ckpt_path = utils.get_value_from_dict(
+            config["model"], "base_model_ckpt_path", True)
+
+        # options for question embedding network
+        self.use_qst_emb_net = utils.get_value_from_dict(
+            config["model"], "use_qst_emb_net", "saaa")
 
         # build layers
-        self.net = Ensemble(config)
-        self.net.load_checkpoint(ckpt_path)
+        self.base_model = []
+        self.num_base_models = len(base_ckpt_path)
+        for m in range(self.num_base_models):
+            base_config = copy.deepcopy(config)
+            self.base_model.append(self.M(base_config))
+            self.base_model[m].load_checkpoint(base_ckpt_path[m])
+            if self.use_gpu and torch.cuda.is_available():
+                self.base_model[m].cuda()
+            self.base_model[m].eval() # set to eval mode for base model
+            self.logger["train"].info( \
+                    "{}th base-net is initialized from {}".format( \
+                    m, base_ckpt_path[m]))
+        if self.use_qst_emb_net:
+            self.qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
         self.infer = building_blocks.MLP(config["model"], "ens_infer")
         self.criterion = nn.CrossEntropyLoss(reduce=True)
 
         # set layer names (all and to be updated)
         self.model_list = ["infer", "criterion"]
         self.models_to_update = ["infer", "criterion"]
+        if self.use_qst_emb_net:
+            self.model_list.append("qst_emb_net")
+            self.models_to_update.append("qst_emb_net")
 
         self.config = config
 
@@ -896,11 +920,18 @@ class EnsembleInference(VirtualVQANetwork):
             logits: logits of network which is an input of criterion
             others: intermediate values (e.g. attention weights)
         """
-        B = data[-1].size()[0]
-        net_outputs = self.net(data)
-        #net_probs = [F.softmax(logit, dim=1) for logit in net_outputs[0][0]]
-        net_probs = [logit for logit in net_outputs[0][0]]
-        concat_probs = torch.stack(net_probs, dim=1).view(B, -1)
+        B = data[0].size()[0]
+        net_probs = []
+        for m in range(self.num_base_models):
+            net_outputs = self.base_model[m](data)
+            if self.use_logit:
+                net_probs.append(net_outputs[0])
+            else:
+                net_probs.append(F.softmax(net_outputs[0], dim=1))
+        if self.use_qst_emb_net:
+            qst_feats = self.qst_emb_net(data[1], data[2])
+            net_probs.append(qst_feats)
+        concat_probs = torch.cat(net_probs, dim=1)
         self.logits = self.infer(concat_probs) # criterion input
 
         out = [self.logits]
@@ -922,142 +953,24 @@ class EnsembleInference(VirtualVQANetwork):
         assert type(config) == type(dict()), \
             "Configuration shuold be dictionary"
 
+        if config["model"]["base_model_type"] == "saaa":
+            config = SAAA.model_specific_config_update(config)
+        elif config["model"]["base_model_type"] == "san":
+            config = SAN.model_specific_config_update(config)
+        elif config["model"]["base_model_type"] == "sharedsaaa":
+            config = SharedSAAA.model_specific_config_update(config)
+        else:
+            raise NotImplementedError("Base model type: {}".format(
+                    m_config["base_model_type"]))
+
         m_config = config["model"]
-        # for image embedding layer
-        if "img_emb_res_block_2d_out_dim" in m_config.keys():
-            m_config["img_emb_dim"] = m_config["img_emb_res_block_2d_out_dim"]
-        # for attention layer
-        m_config["qst_emb_dim"] = m_config["rnn_hidden_dim"]
-        # for classigication layer
-        m_config["answer_mlp_inp_dim"] = m_config["rnn_hidden_dim"] \
-                + (m_config["img_emb_dim"] * m_config["num_stacks"])
-        m_config["answer_mlp_out_dim"] = m_config["num_labels"]
-        # for classigication layer
-        m_config["ens_infer_mlp_inp_dim"] = m_config["num_labels"] * m_config["num_models"]
+        # for inference network
+        m_config["ens_infer_mlp_inp_dim"] = \
+            m_config["num_labels"] * m_config["num_models"]
         m_config["ens_infer_mlp_out_dim"] = m_config["num_labels"]
-
-        return config
-
-class SharedSAAA(VirtualVQANetwork):
-    def __init__(self, config, verbose=True):
-        super(SharedSAAA, self).__init__(config, verbose) # Must call super __init__()
-
-        self.classname = "SharedSAAA"
-        self.use_gpu = utils.get_value_from_dict(
-            config["model"], "use_gpu", True)
-        loss_reduce = utils.get_value_from_dict(
-            config["model"], "loss_reduce", True)
-
-        # options for deep image embedding
-        self.use_deep_img_emb = utils.get_value_from_dict(
-            config["model"], "use_deep_img_embedding", False)
-        # options for applying l2-norm
-        self.apply_l2_norm = \
-            utils.get_value_from_dict(
-                config["model"], "apply_l2_norm", True)
-        # options if use attention transfer
-        self.use_attention_transfer = utils.get_value_from_dict(
-                config["model"], "use_attention_transfer", False)
-        if self.use_attention_transfer:
-            assert self.use_deep_img_emb, \
-                "If you use attention transfer, you also use deep image embedding layers"
-
-        # build layers
-        if self.use_deep_img_emb:
-            self.img_emb_net = building_blocks.ResBlock2D(config["model"], "img_emb")
-        self.saaa = building_blocks.RevisedStackedAttention(config["model"])
-        self.classifier = building_blocks.MLP(config["model"], "answer")
-        self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
-
-        # set layer names (all and to be updated)
-        self.model_list = ["saaa", "classifier", "criterion"]
-        self.models_to_update = ["saaa", "classifier", "criterion"]
-        if self.use_deep_img_emb:
-            self.model_list.append("img_emb_net")
-            self.models_to_update.append("img_emb_net")
-
-        self.config = config
-
-    def forward(self, data, qst_feats):
-        """ Forward network
-        Args:
-            data: list [imgs, qst_labels, qst_lenghts, answer_labels]
-            qst_feats: question embedding features
-        Returns:
-            logits: logits of network which is an input of criterion
-            others: intermediate values (e.g. attention weights)
-        """
-        # forward network
-        # applying l2-norm for img features
-        img_feats = data[0]
-        if self.apply_l2_norm:
-            img_feats = img_feats \
-                / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
-        if self.use_deep_img_emb:
-            img_emb_out = self.img_emb_net(img_feats)
-            img_feats = img_emb_out["feats"]
-            if self.use_attention_transfer:
-                att_groups = img_emb_out["att_groups"]
-        saaa_outputs = self.saaa(qst_feats, img_feats) # [ctx, att list]
-        # concatenate attended feature and question feat
-        multimodal_feats = torch.cat((saaa_outputs[0], qst_feats), 1)
-        self.logits = self.classifier(multimodal_feats) # criterion input
-
-        others = saaa_outputs[1]
-        criterion_inp = self.logits
-        out = [criterion_inp, others]
-        if self.use_attention_transfer:
-            out.append(att_groups)
-        return out
-
-    def save_results(self, data, qst_feats, prefix, mode="train", compute_loss=False):
-        """ Get qualitative results (attention weights) and save them
-        Args:
-            data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
-        """
-        # save predictions
-        self.save_predictions(prefix, mode)
-        if self.config["misc"]["dataset"] != "vqa":
-            epoch = int(prefix.split("_")[-1])
-            self.visualize_confusion_matrix(epoch, prefix=mode)
-
-        if mode == "train":
-            # maintain sample data
-            self._set_sample_data(data)
-
-            # convert data as Variables
-            if self.is_main_net:
-                data = self.tensor2variable(data)
-            # forward network
-            outputs = self.forward(data, qst_feats)
-            logits, att_weights = outputs[0], outputs[1]
-            if compute_loss:
-                loss = self.loss_fn(logits, data[-2], count_loss=False)
-
-            # visualize result
-            num_stacks = att_weights.size(1)
-            att_weights = att_weights.data.cpu()
-            qualitative_results = [[att_weights[:,i,:,:]
-                  for i in range(num_stacks)], logits.data.cpu()]
-            vis_utils.save_san_visualization(
-                self.config, self.sample_data, qualitative_results,
-                self.itow, self.itoa, prefix)
-
-    @classmethod
-    def model_specific_config_update(cls, config):
-        assert type(config) == type(dict()), \
-            "Configuration shuold be dictionary"
-
-        m_config = config["model"]
-        # for image embedding layer
-        if "img_emb_res_block_2d_out_dim" in m_config.keys():
-            m_config["img_emb_dim"] = m_config["img_emb_res_block_2d_out_dim"]
-        # for attention layer
-        m_config["qst_emb_dim"] = m_config["rnn_hidden_dim"]
-        # for classigication layer
-        m_config["answer_mlp_inp_dim"] = m_config["rnn_hidden_dim"] \
-                + (m_config["img_emb_dim"] * m_config["num_stacks"])
-        m_config["answer_mlp_out_dim"] = m_config["num_labels"]
+        if ("use_qst_emb_net" in m_config.keys()) and m_config["use_qst_emb_net"]:
+            m_config["ens_infer_mlp_inp_dim"] = \
+                m_config["ens_infer_mlp_inp_dim"] + m_config["rnn_hidden_dim"]
 
         return config
 
