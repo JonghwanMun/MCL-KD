@@ -936,7 +936,8 @@ class EnsembleInference(VirtualVQANetwork):
         if self.use_qst_emb_net:
             self.model_list.append("qst_emb_net")
             self.models_to_update.append("qst_emb_net")
-
+        
+        self.mean_vector = torch.load(config["vector_path"] + "sample_mean.pkl")
         self.config = config
 
     def forward(self, data):
@@ -949,22 +950,47 @@ class EnsembleInference(VirtualVQANetwork):
         """
         B = data[0].size()[0]
         net_probs = []
+        Model_list = ["M0", "M1", "M2", "M3", "M4"]
         for m in range(self.num_base_models):
             if self.config["flag_inference"]:
                 net_outputs = self.base_model[m].Inference_forward(data)
+                # 0 - input & dropout, 1 - first L, 2 - dropout, 3 -relue, 4 - infal
                 if self.config["inference_case"] == 1:
-                    index_list = [3, 4]
+                    index_list = [3, 4] # 0 -3072, 1&2&3 - 1024, 4 - 3000
+                    mean_list = [1, 2]
+                elif self.config["inference_case"] == 2:
+                    index_list = [0, 4]
+                    mean_list = [0, 2]
+                elif self.config["inference_case"] == 3:
+                    index_list = [4]
+                    mean_list = [2]
                 output = 0
                 index_count = 0
                 for i in index_list:
+                    mean_vector = torch.from_numpy(self.mean_vector[Model_list[m]][mean_list[index_count]]).float().cuda()
+                    mean_vector = Variable(mean_vector)
                     if index_count == 0:
-                        output = net_outputs[i]
+                        temp_output = 0
+                        for j in range(3000):
+                            NCM_score = torch.norm(net_outputs[i] - mean_vector[j].repeat(net_outputs[i].size(0), 1), 2, dim=1)
+                            if j == 0:
+                                temp_output = NCM_score.view(-1, 1)
+                            else:
+                                temp_output = torch.cat((temp_output, NCM_score.view(-1, 1)), dim=1)
                         index_count =1
+                        output = temp_output
                     else:
-                        output = torch.cat((output, net_outputs[i]), dim=1)
-                print(output.size())
+                        temp_output = 0
+                        for j in range(3000):
+                            NCM_score = torch.norm(net_outputs[i] - mean_vector[j].repeat(net_outputs[i].size(0), 1), 2, dim=1)
+                            if j == 0:
+                                temp_output = NCM_score.view(-1, 1)
+                            else:
+                                temp_output = torch.cat((temp_output, NCM_score.view(-1, 1)), dim=1)
+                        output = torch.cat((output, temp_output), dim=1)
+
                 net_probs.append(output)
-                self.use_qst_emb_net = False
+                self.use_qst_emb_net = True
             else:
                 net_outputs = self.base_model[m](data)
                 if self.use_logit:
@@ -974,6 +1000,7 @@ class EnsembleInference(VirtualVQANetwork):
         if self.use_qst_emb_net:
             qst_feats = self.qst_emb_net(data[1], data[2])
             net_probs.append(qst_feats)
+        
         concat_probs = torch.cat(net_probs, dim=1)
         self.logits = self.infer(concat_probs) # criterion input
 
