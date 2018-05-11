@@ -364,8 +364,8 @@ class VirtualVQANetwork(VirtualNetwork):
         for n in at:
             mask = (correct_mask >= n)
             num_correct = mask.sum()
-            self.status["oracle@{}".format(n)] = num_correct / B
-            self.counters["oracle@{}".format(n)].add(num_correct, B)
+            self.status["oracle-{}".format(n)] = num_correct / B
+            self.counters["oracle-{}".format(n)].add(num_correct, B)
 
         mask = (correct_mask > 0)
         num_correct = mask.sum()

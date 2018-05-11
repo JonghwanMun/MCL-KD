@@ -331,7 +331,7 @@ class Ensemble(VirtualVQANetwork):
             self.status["top1-max"] = 0
             self.status["oracle"] = 0
             for m in range(self.config["model"]["num_models"]):
-                self.status["oracle@{}".format(m+1)] = 0
+                self.status["oracle-{}".format(m+1)] = 0
             if self.config["model"]["use_assignment_model"]:
                 self.status["sel-acc"] = 0
         else:
@@ -448,7 +448,7 @@ class Ensemble(VirtualVQANetwork):
         self.counters["top1-max"] = accumulator.Accumulator("top1-max")
         self.counters["oracle"] = accumulator.Accumulator("oracle")
         for m in range(self.config["model"]["num_models"]):
-            metric_name = "oracle@{}".format(m+1)
+            metric_name = "oracle-{}".format(m+1)
             self.counters[metric_name] = accumulator.Accumulator(metric_name)
         if self.config["model"]["use_assignment_model"]:
             self.counters["sel-acc"] = accumulator.Accumulator("sel-acc")
@@ -916,6 +916,8 @@ class EnsembleInference(VirtualVQANetwork):
         base_ckpt_path = utils.get_value_from_dict(
             config["model"], "base_model_ckpt_path", True)
 
+        self.save_sample_mean = utils.get_value_from_dict(
+            config["model"], "save_sample_mean", False)
         self.output_with_internal_values = utils.get_value_from_dict(
             config["model"], "output_with_internal_values", False)
 
@@ -948,7 +950,8 @@ class EnsembleInference(VirtualVQANetwork):
             self.model_list.append("qst_emb_net")
             self.models_to_update.append("qst_emb_net")
 
-        self.mean_vector = torch.load(config["vector_path"] + "sample_mean.pkl")
+        if config["flag_inference"]:
+            self.mean_vector = torch.load(config["vector_path"] + "sample_mean.pkl")
         self.config = config
 
     def forward(self, data):
@@ -967,7 +970,22 @@ class EnsembleInference(VirtualVQANetwork):
 
         Model_list = ["M0", "M1", "M2", "M3", "M4"]
         for m in range(self.num_base_models):
-            if self.config["flag_inference"]:
+            if self.save_sample_mean:
+                net_outputs = self.base_model[m].Inference_forward(data)
+                index_list = [0, 3, 4] # 0 -3072, 1&2&3 - 1024, 4 - 3000
+                output = 0
+                index_count = 0
+                for i in index_list:
+                    if index_count == 0:
+                        output = net_outputs[i]
+                        index_count = 1
+                    else:
+                        output = torch.cat((output, net_outputs[i]), dim=1)
+                    if self.output_with_internal_values:
+                        mth_net_output[m].append(net_outputs[i])
+                net_probs.append(output)
+
+            elif self.config["flag_inference"]:
                 net_outputs = self.base_model[m].Inference_forward(data)
                 # 0 - input & dropout, 1 - first L, 2 - dropout, 3 -relue, 4 - infal
                 if self.config["inference_case"] == 1:
@@ -1007,9 +1025,6 @@ class EnsembleInference(VirtualVQANetwork):
                             else:
                                 temp_output = torch.cat((temp_output, NCM_score.view(-1, 1)), dim=1)
                         output = torch.cat((output, Variable(temp_output)), dim=1)
-
-                    if self.output_with_internal_values:
-                        mth_net_output[m].append(net_outputs[i])
 
                 net_probs.append(output)
                 self.use_qst_emb_net = False
@@ -1068,7 +1083,7 @@ class EnsembleInference(VirtualVQANetwork):
         if ("use_qst_emb_net" in m_config.keys()) and m_config["use_qst_emb_net"]:
             m_config["ens_infer_mlp_inp_dim"] = \
                 m_config["ens_infer_mlp_inp_dim"] + m_config["rnn_hidden_dim"]
-        if config["flag_inference"]:
+        if config["flag_inference"] or config["model"]["save_sample_mean"]:
             m_config["ens_infer_mlp_inp_dim"] = config["num_input_for_inference"]
 
         return config

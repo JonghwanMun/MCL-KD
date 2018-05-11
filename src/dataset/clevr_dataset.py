@@ -425,6 +425,8 @@ class DataSet(data.Dataset):
         # set path of pre-computed logits of base models
         self.base_logits_path = utils.get_value_from_dict(config, "base_logits_path", "")
 
+        self.fetching_answer_option = "simple"
+
     def __getitem__(self, idx):
         """ Retrun a data (images, question_label, question length and answers)
         Returns:
