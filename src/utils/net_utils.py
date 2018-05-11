@@ -43,6 +43,31 @@ def idx2onehot(idx, num_labels):
     one_hot.scatter_(1, idx.view(-1,1), 1)
     return one_hot
 
+# Currently not implemented
+def compute_oracle_accuracy(logit_list, gts, at):
+    assert type(logit_list) == type(list()), \
+        "logits should be list() for computing oracle accuracy"
+
+    at = [1, 2, 3, 4, 5]
+
+    B = logit_list[0].size(0)
+    # compute oracle accuracy
+    if self.prob_list == None:
+        self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
+    self.base_top1_predictions = []
+    for m in range(self.num_models):
+        val, idx = self.prob_list[m].max(dim=1)
+        idx = net_utils.get_data(idx, to_clone=False)
+        if self.config["misc"]["dataset"] == "vqa":
+            self.base_top1_predictions.append(idx)
+        if m == 0:
+            correct_mask = torch.eq(idx, gts)
+        else:
+            correct_mask += torch.eq(idx, gts)
+    correct_mask = correct_mask.clamp(min=0, max=1)
+    num_correct = correct_mask.sum()
+
+
 def compute_kl_div(inputs, targets, tau=-1, \
                     apply_softmax_on_target=True, reduce=False):
 

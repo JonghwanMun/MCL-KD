@@ -346,6 +346,7 @@ class VirtualVQANetwork(VirtualNetwork):
             "logits should be list() for computing oracle accuracy"
 
         B = logit_list[0].size(0)
+        at = list(np.arange(self.num_models)+1)
         # compute oracle accuracy
         if self.prob_list == None:
             self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
@@ -359,9 +360,15 @@ class VirtualVQANetwork(VirtualNetwork):
                 correct_mask = torch.eq(idx, gts)
             else:
                 correct_mask += torch.eq(idx, gts)
-        correct_mask = correct_mask.clamp(min=0, max=1)
-        num_correct = correct_mask.sum()
 
+        for n in at:
+            mask = (correct_mask >= n)
+            num_correct = mask.sum()
+            self.status["oracle@{}".format(n)] = num_correct / B
+            self.counters["oracle@{}".foramt(n)].add(num_correct, B)
+
+        mask = (correct_mask > 0)
+        num_correct = mask.sum()
         self.status["oracle"] = num_correct / B
         self.counters["oracle"].add(num_correct, B)
 
