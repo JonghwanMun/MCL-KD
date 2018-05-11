@@ -48,9 +48,8 @@ def compute_oracle_accuracy(logit_list, gts, at):
     assert type(logit_list) == type(list()), \
         "logits should be list() for computing oracle accuracy"
 
-    at = [1, 2, 3, 4, 5]
-
     B = logit_list[0].size(0)
+    at = list(range(1, self.num_models+1))
     # compute oracle accuracy
     if self.prob_list == None:
         self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]

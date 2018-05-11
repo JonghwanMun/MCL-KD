@@ -59,6 +59,7 @@ def main(params):
     L = data.DataLoader(dset, batch_size=loader_config["batch_size"], \
                         num_workers=params["num_workers"], \
                         shuffle=False, collate_fn=dataset.collate_fn)
+    config = M.override_config_from_loader(config, dset)
 
     if params["mode"] == "eval":
 
@@ -76,16 +77,21 @@ def main(params):
                 net.gpu_mode()
 
             # load checkpoint
-            ckpt_path = os.path.join(exp_path, "checkpoints", "checkpoint_epoch_{:03d}.pkl".format(epoch))
-            assert os.path.exists(ckpt_path), "Checkpoint does not exists ({})".format(ckpt_path)
-            net.load_checkpoint(ckpt_path)
+            if not (net.classname == "ENSEMBLE" and config["model"]["version"] == "IE"):
+                ckpt_path = os.path.join(exp_path, "checkpoints",
+                                         "checkpoint_epoch_{:03d}.pkl".format(epoch))
+                assert os.path.exists(ckpt_path), \
+                    "Checkpoint does not exists ({})".format(ckpt_path)
+                net.load_checkpoint(ckpt_path)
+
+            # If checkpoint is already applied with curriculum learning
             apply_cc_after = utils.get_value_from_dict(
                     config["model"], "apply_curriculum_learning_after", -1)
-            # If checkpoint use curriculum learning
             if (apply_cc_after > 0) and (epoch >= apply_cc_after):
                 net.apply_curriculum_learning()
 
-            cmf.evaluate(config, L, net, epoch-1, logger_name="eval", mode="Evaluation", verbose_every=100)
+            cmf.evaluate(config, L, net, epoch-1, logger_name="eval",
+                         mode="Evaluation", verbose_every=100)
 
     elif params["mode"] == "selection":
         epoch = params["start_epoch"]
