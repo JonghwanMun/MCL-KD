@@ -1,4 +1,6 @@
 import os
+import sys
+sys.path.append("src/externals/vqa")
 import time
 import yaml
 import json
@@ -124,7 +126,7 @@ def train(config):
             tm.reset()
 
             if config["misc"]["debug"]:
-                if ii % 1 == 0:
+                if ii % 150 == 0:
                     break
             # epoch done
 

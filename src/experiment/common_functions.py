@@ -10,6 +10,8 @@ from tqdm import tqdm
 from datetime import datetime
 from collections import OrderedDict
 
+import torch
+
 from src.dataset import clevr_dataset, vqa_dataset
 from src.model import building_blocks, building_networks
 from src.utils import accumulator, timer, utils, io_utils, net_utils
@@ -28,6 +30,8 @@ def get_model(base_model_type):
         M = getattr(building_networks, "EnsembleInference")
     elif base_model_type in ["onlyqst", "ONLYQST"]:
         M = getattr(building_networks, "OnlyQuestion")
+    elif base_model_type in ["mutan", "MUTAN"]:
+        M = getattr(building_networks, "MutanWrapper")
     else:
         raise NotImplementedError("Not supported model type ({})".format(base_model_type))
     return M
@@ -289,6 +293,78 @@ def save_logits(config, L, net, prefix="", mode="train"):
             save_path = os.path.join(save_dir, "{}.npy".format(qst_id))
             np.save(save_path, logits[qi].numpy())
 
+def compute_sample_mean_per_class(config, L, net, prefix=""):
+
+    assert net.classname == "INFERENCE", \
+        "Currently only suppert ensemble inference network"
+    assert config["flag_inference"]
+    assert config["model"]["output_with_internal_values"]
+
+    # prepare directory for saving sample mean
+    save_dir = os.path.join("results", "sample_mean", str(prefix))
+    io_utils.check_and_create_dir(save_dir)
+
+    # construct sample mean variable where the structure is
+    # {
+    #   "M0": [sample_mean_for_first_layer, sample_mean_for_second_layer, ...,
+    #   sample_mean_for_last_layer]
+    #   "M1": [sample_mean_for_first_layer, sample_mean_for_second_layer, ...,
+    #   sample_mean_for_last_layer]
+    #    ...
+    #   "Mm": [sample_mean_for_first_layer, sample_mean_for_second_layer, ...,
+    #   sample_mean_for_last_layer]
+    # }
+    # note: size of each sample_mean is [num_answers, feat_dims]
+    num_models = net.num_base_models
+    num_answers = config["model"]["num_labels"]
+    sample_means = {"M{}".format(m):[] for m in range(num_models)}
+    sample_cnt  = {"M{}".format(m):[] for m in range(num_models)}
+
+    i = 1
+    for batch in tqdm(L):
+        # forward the network
+        B = batch[0][0].size(0)
+        outputs = net.evaluate(batch)
+        gt_answers = batch[0][-1]
+        if type(gt_answers) == type(list()):
+            gt_answers = gt_answers[0]
+
+        assert len(outputs) > 0
+        internal_values = outputs[2] # m * [internal_1, internal_2, ..., internal_n]
+
+        for b in range(B):
+            gt_idx = gt_answers[b]
+            for m in range(num_models):
+                modelname = "M{}".format(m)
+                num_internal = len(internal_values[m])
+                for iv in range(num_internal):
+                    if i == 1:
+                        sample_means[modelname].append(
+                            np.zeros((num_answers, internal_values[m][iv].size(1)))
+                        )
+                        sample_cnt[modelname].append(
+                            np.zeros((num_answers))
+                        )
+                    sample_means[modelname][iv][gt_idx] += \
+                        net_utils.get_data(internal_values[m][iv][b]).numpy()
+                    sample_cnt[modelname][iv][gt_idx] += 1
+            i += 1
+
+    # compute mean (divide by counts)
+    for modelname in sample_means.keys():
+        for i,(s,c) in enumerate(zip(sample_means[modelname], sample_cnt[modelname])):
+            # TODO: deal with nan
+            sample_means[modelname][i] = s / c[:, np.newaxis]
+
+    # save sample mean & count
+    save_path = os.path.join(save_dir, "sample_mean.pkl")
+    torch.save(sample_means, save_path)
+    print("save done in {}".format(save_path))
+    save_path = os.path.join(save_dir, "sample_cnt.pkl")
+    torch.save(sample_cnt, save_path)
+    print("save done in {}".format(save_path))
+
+
 
 """ Methods for debugging """
 def one_step_forward(L, net):
@@ -301,7 +377,7 @@ def one_step_forward(L, net):
     outputs = net.forward_update(batch, 0.0005)
 
     # accumulate the number of correct answers
-    net.compute_status(outputs[1], batch[3])
+    net.compute_status(outputs[1], batch[0][-1])
 
     # print learning status
-    net.print_status(epoch, 1)
+    net.print_status(1, 1)

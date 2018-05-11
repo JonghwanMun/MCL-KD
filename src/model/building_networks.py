@@ -15,6 +15,9 @@ from src.model.virtual_VQA_network import VirtualVQANetwork
 from src.experiment import common_functions as cmf
 from src.utils import accumulator, utils, io_utils, vis_utils, net_utils
 
+# import externals
+import vqa.models as external_models
+
 
 class Ensemble(VirtualVQANetwork):
     def __init__(self, config):
@@ -248,7 +251,7 @@ class Ensemble(VirtualVQANetwork):
                 #self.visualize_assignments(prefix=prefix, mode=mode)
 
         """ given sample data """
-        if (data is not None) and (self.config["misc"]["dataset"] != "vqa"):
+        if (data is not None):# and (self.config["misc"]["dataset"] != "vqa"):
             # maintain sample data
             self._set_sample_data(data)
 
@@ -687,7 +690,7 @@ class SAAA(VirtualVQANetwork):
         if self.use_attention_transfer:
             out.append(att_groups)
         return out
-    
+
     def Inference_forward(self, data):
         """ Forward network
         Args:
@@ -908,6 +911,9 @@ class EnsembleInference(VirtualVQANetwork):
         base_ckpt_path = utils.get_value_from_dict(
             config["model"], "base_model_ckpt_path", True)
 
+        self.output_with_internal_values = utils.get_value_from_dict(
+            config["model"], "output_with_internal_values", False)
+
         # options for question embedding network
         self.use_qst_emb_net = utils.get_value_from_dict(
             config["model"], "use_qst_emb_net", "saaa")
@@ -949,11 +955,16 @@ class EnsembleInference(VirtualVQANetwork):
         """
         B = data[0].size()[0]
         net_probs = []
+        mth_net_output = []
+        if self.output_with_internal_values:
+            for m in range(self.num_base_models): mth_net_output.append([])
+
         for m in range(self.num_base_models):
             if self.config["flag_inference"]:
                 net_outputs = self.base_model[m].Inference_forward(data)
                 if self.config["inference_case"] == 1:
-                    index_list = [3, 4]
+                    index_list = [0, 3, 4]
+                    # 0 (3000x3000), 3 (1200x3000), 4 ()
                 output = 0
                 index_count = 0
                 for i in index_list:
@@ -962,7 +973,10 @@ class EnsembleInference(VirtualVQANetwork):
                         index_count =1
                     else:
                         output = torch.cat((output, net_outputs[i]), dim=1)
-                print(output.size())
+                    if self.output_with_internal_values:
+                        mth_net_output[m].append(net_outputs[i])
+
+                #print(output.size())
                 net_probs.append(output)
                 self.use_qst_emb_net = False
             else:
@@ -978,7 +992,12 @@ class EnsembleInference(VirtualVQANetwork):
         self.logits = self.infer(concat_probs) # criterion input
 
         out = [self.logits]
+        if self.output_with_internal_values:
+            out.append(mth_net_output)
         return out
+
+    def save_sample_mean_per_class(self,):
+        pass
 
     def save_results(self, data, prefix, mode="train", compute_loss=False):
         """ Get qualitative results (attention weights) and save them
@@ -1016,7 +1035,7 @@ class EnsembleInference(VirtualVQANetwork):
                 m_config["ens_infer_mlp_inp_dim"] + m_config["rnn_hidden_dim"]
         if config["flag_inference"]:
             m_config["ens_infer_mlp_inp_dim"] = config["num_input_for_inference"]
-            
+
         return config
 
 class OnlyQuestion(VirtualVQANetwork):
@@ -1078,5 +1097,63 @@ class OnlyQuestion(VirtualVQANetwork):
         # for classigication layer
         m_config["answer_mlp_inp_dim"] = m_config["rnn_hidden_dim"]
         m_config["answer_mlp_out_dim"] = m_config["num_labels"]
+
+        return config
+
+
+class MutanWrapper(VirtualVQANetwork):
+    def __init__(self, config, verbose=True):
+        super(MutanWrapper, self).__init__(config, verbose) # Must call super __init__()
+
+        self.classname = "MUTAN"
+        self.use_gpu = utils.get_value_from_dict(
+            config["model"], "use_gpu", True)
+        loss_reduce = utils.get_value_from_dict(
+            config["model"], "loss_reduce", True)
+
+        # build layers
+        self.mutan = external_models.factory(config["model"],
+                                            config["wtoi"], config["atoi"],
+                                            cuda=self.use_gpu, data_parallel=False)
+        self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
+
+        # set layer names (all and to be updated)
+        self.model_list = ["mutan", "criterion"]
+        self.models_to_update = ["mutan", "criterion"]
+
+    def forward(self, data):
+        """ Forward network
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels]
+        Returns:
+            logits: logits of network which is an input of criterion
+            others: intermediate values (e.g. attention weights)
+        """
+        # forward network
+        input_visual = data[0]
+        input_question = data[1]
+        self.logits = self.mutan(input_visual, input_question)
+
+        criterion_inp = self.logits
+        out = [criterion_inp]
+        return out
+
+    def save_results(self, data, prefix, mode="train", compute_loss=False):
+        """ Get qualitative results (attention weights) and save them
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
+        """
+        # save predictions
+        self.save_predictions(prefix, mode)
+
+    @classmethod
+    def model_specific_config_update(cls, config):
+        return config
+
+    @staticmethod
+    def override_config_from_loader(config, loader):
+        # model: mutan
+        config["wtoi"] = loader.get_wtoi()
+        config["atoi"] = loader.get_atoi()
 
         return config
