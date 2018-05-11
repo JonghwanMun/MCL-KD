@@ -160,8 +160,8 @@ def main():
     # loading configuration and setting environment
     config = io_utils.load_yaml(params["config_path"])
     config["flag_inference"] = True # flag for training inference net using low features
-    config["inference_case"] = 2 # combination of low level features
-    config["num_input_for_inference"] = 31384 # 20120 (21144) for case 1, 30360 (31384) for case 2
+    config["inference_case"] = 3 # combination of low level features
+    config["num_input_for_inference"] = 15000 # 20120 (21144) for case 1, 30360 (31384) for case 2
     config["vector_path"] = "/home/km/KD-MCL/results/sample_mean/vqa_train_IE/"
     config = M.override_config_from_params(config, params)
     cmf.create_save_dirs(config["misc"])

@@ -968,29 +968,33 @@ class EnsembleInference(VirtualVQANetwork):
                 index_count = 0
                 for i in index_list:
                     mean_vector = torch.from_numpy(self.mean_vector[Model_list[m]][mean_list[index_count]]).float().cuda()
-                    mean_vector = Variable(mean_vector)
+                    #mean_vector = Variable(mean_vector)
                     if index_count == 0:
                         temp_output = 0
                         for j in range(3000):
-                            NCM_score = torch.norm(net_outputs[i] - mean_vector[j].repeat(net_outputs[i].size(0), 1), 2, dim=1)
+                            NCM_score = torch.norm(net_outputs[i].data - mean_vector[j].repeat(net_outputs[i].size(0), 1), 2, dim=1)
+                            if j == 846 or j == 1702:
+                                NCM_score.fill_(0)
                             if j == 0:
                                 temp_output = NCM_score.view(-1, 1)
                             else:
                                 temp_output = torch.cat((temp_output, NCM_score.view(-1, 1)), dim=1)
                         index_count =1
-                        output = temp_output
+                        output = Variable(temp_output)
                     else:
                         temp_output = 0
                         for j in range(3000):
-                            NCM_score = torch.norm(net_outputs[i] - mean_vector[j].repeat(net_outputs[i].size(0), 1), 2, dim=1)
+                            NCM_score = torch.norm(net_outputs[i].data - mean_vector[j].repeat(net_outputs[i].size(0), 1), 2, dim=1)
+                            if j == 846 or j == 1702:
+                                NCM_score.fill_(0)
                             if j == 0:
                                 temp_output = NCM_score.view(-1, 1)
                             else:
                                 temp_output = torch.cat((temp_output, NCM_score.view(-1, 1)), dim=1)
-                        output = torch.cat((output, temp_output), dim=1)
+                        output = torch.cat((output, Variable(temp_output)), dim=1)
 
                 net_probs.append(output)
-                self.use_qst_emb_net = True
+                self.use_qst_emb_net = False
             else:
                 net_outputs = self.base_model[m](data)
                 if self.use_logit:
