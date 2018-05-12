@@ -811,9 +811,9 @@ class EnsembleLoss(nn.Module):
                 # compute KL divergence with Uniform distribution for each model
                 prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
                              for logit in logit_list] # m*[B,C]
-                nonspecialist_loss_list = [
-                    self.beta * (-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
-                    for prob in prob_list] # m*[B]
+                nonspecialist_loss_list = [ self.beta / self.num_labels \
+                        * (-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
+                        for prob in prob_list] # m*[B]
 
                 # for printing status
                 txt = self.version + " CE {} | ENT {} | ORACLE {} "
@@ -1051,11 +1051,13 @@ class EnsembleLoss(nn.Module):
             nonspecialist_loss_list = [net_utils.compute_kl_div( \
                 student_logit, teacher_logit, self.tau) \
                 for student_logit in logit_list] # m*[B]
+            """
             # prob version
             teacher_prob = sum([F.softmax(tl, dim=1) for tl in teacher_list]) / self.m
             nonspecialist_loss_list = [net_utils.compute_kl_div( \
                 student_logit, teacher_prob, self.tau, False) \
                 for student_logit in logit_list] # m*[B]
+            """
         else:
             nonspecialist_loss_list = [net_utils.compute_kl_div( \
                 student_logit, teacher_logit, self.tau) \

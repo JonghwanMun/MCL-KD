@@ -321,6 +321,8 @@ class Ensemble(VirtualVQANetwork):
 
     """ Status related methods """
     def reset_status(self, init_reset=False):
+        self.prob_list = None
+        self.probs = None
         if self.status == None:
             # initialize metric scores/losses
             self.status = OrderedDict()

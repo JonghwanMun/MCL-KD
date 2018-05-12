@@ -336,6 +336,47 @@ class VirtualVQANetwork(VirtualNetwork):
                 self.status[model_name] = num_correct / B
                 self.counters[model_name].add(num_correct, B)
 
+    def get_oracle_mask(self, logit_list, gts):
+        """ Compute Oracle Accuracy
+        Args:
+            logit_list: list of m * [batch_size, num_answers]
+            gts: ground-truth answers [batch_size]
+        """
+        assert type(logit_list) == type(list()), \
+            "logits should be list() for computing oracle accuracy"
+
+        #self.compute_top1_accuracy(logits, gts)
+        masks, true_masks = [], []
+        B = logit_list[0].size(0)
+        at = list(range(1, self.num_models+1))
+        # compute oracle accuracy
+        if self.prob_list == None:
+            self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
+        self.base_top1_predictions = []
+        for m in range(self.num_models):
+            val, idx = self.prob_list[m].max(dim=1)
+            idx = net_utils.get_data(idx, to_clone=False)
+            if self.config["misc"]["dataset"] == "vqa":
+                self.base_top1_predictions.append(idx)
+            mask = torch.eq(idx, gts)
+            print("M{}".format(m),
+                  mask.view(1,-1),
+                  val.data.view(1,-1))
+            true_masks.append(copy.deepcopy(mask))
+            if m == 0:
+                correct_mask = mask
+            else:
+                correct_mask += mask
+
+        for n in at:
+            mask = (correct_mask >= n)
+            num_correct = mask.sum()
+            self.status["oracle-{}".format(n)] = num_correct / B
+            self.counters["oracle-{}".format(n)].add(num_correct, B)
+            masks.append(mask)
+
+        return masks, true_masks
+
     def compute_oracle_accuracy(self, logit_list, gts):
         """ Compute Oracle Accuracy
         Args:

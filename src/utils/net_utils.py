@@ -3,6 +3,8 @@ import pdb
 import json
 import numpy as np
 from itertools import combinations
+from collections import OrderedDict
+from matplotlib import pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -66,6 +68,158 @@ def compute_oracle_accuracy(logit_list, gts, at):
     correct_mask = correct_mask.clamp(min=0, max=1)
     num_correct = correct_mask.sum()
 
+def make_list_at(values, idx):
+    val_list = [v[idx] for v in values]
+    return val_list
+
+def compute_distance(inp1, inp2, normalize=True):
+    if inp1.dim() == 1:
+        if normalize:
+            inp1 = inp1 / inp1.norm(p=2, keepdim=True).expand_as(inp1)
+            inp2 = inp2 / inp2.norm(p=2, keepdim=True).expand_as(inp2)
+        return (inp1 * inp2).sum() # cosine similarity
+        #return torch.sqrt( ((inp1-inp2)**2).sum() ) # l2 distance
+    elif inp1.dim() == 2:
+        if normalize:
+            inp1 = inp1 / inp1.norm(p=2, dim=1, keepdim=True).expand_as(inp1)
+            inp2 = inp2 / inp2.norm(p=2, dim=1, keepdim=True).expand_as(inp2)
+        return (inp1 * inp2).sum(1) # cosine similarity
+        #return torch.sqrt( ((inp1-inp2)**2).sum(1) ) # l2 distance
+    else:
+        raise NotImplementedError()
+
+    #return (inp1 * inp2).sum(1) # cosine similarity
+
+def compute_single_variance(logit_list, gt):
+    T = 1
+    k = 3
+    m = len(logit_list)
+    pairs, _ = get_combinations(m, 2)
+    combinations, inverse_combinations = get_combinations(m, k)
+    cbn_pairs, _ = get_combinations(k, 2)
+    prob_list = [F.softmax(logit/T) for logit in logit_list] # m*[1,num_answers]
+
+    dists = OrderedDict()
+    vis_dists = np.zeros((m,m))
+    for p in pairs:
+        pair_name = "{}-{}".format(p[0], p[1])
+        vis_dists[p[0], p[1]] = compute_distance(
+                prob_list[p[0]], prob_list[p[1]],
+                normalize=False).data[0] # num_pairs*[1]
+        vis_dists[p[1], p[0]] = compute_distance(
+                prob_list[p[0]], prob_list[p[1]],
+                normalize=False).data[0] # num_pairs*[1]
+
+        dists[pair_name] = compute_distance(
+                prob_list[p[0]], prob_list[p[1]],
+            normalize=False).data[0] # num_pairs*[1]
+
+    row_sum = torch.from_numpy(vis_dists).sum(dim=0).view(-1,1).numpy()
+
+    # compute best combination
+    variances = [] # num_cbn*[B]
+    for cbn in combinations: # cbn: [012], [013], [014], ...
+        scores = [] # num_cp*[B]
+        for cp in cbn_pairs: # cp: [01], [02], [12]
+            name = "{}-{}".format(cbn[cp[0]], cbn[cp[1]])
+            scores.append(dists[name])
+        variances.append(sum(scores))
+
+    idx = variances.index(max(variances))
+
+    # compute final accuracy
+    selected_probs = []
+    selected_mean_probs = []
+    #best_cbn_idx = combinations[idx]
+    best_cbn_idx = combinations[idx]
+
+    # [k,A] -> [A]
+    selected_probs = [prob_list[i] for i in best_cbn_idx] # k*[A]
+    selected_mean_probs = torch.stack(selected_probs, dim=0).mean(dim=0) # [k,A]
+    v, idx = net_utils.get_data(selected_mean_probs).max(dim=0) # [1,A] -> [1]
+    correct = torch.sum(torch.eq(idx, gt))
+
+    # visualization
+    pp = []
+    ii = []
+    txt = ""
+    for prob in prob_list:
+        v, i = prob.max(dim=0)
+        pp.append(v); ii.append(i)
+        txt += "{:.4f}-{}  |  ".format(v.data[0],i.data[0])
+
+    # top1-avg
+    top1_probs = torch.stack(prob_list, dim=0).mean(dim=0)
+    _, top1_idx = net_utils.get_data(top1_probs).max(dim=0)
+    top1_correct  = torch.sum(torch.eq(top1_idx,gt))
+
+    print("best combination: ", best_cbn_idx, txt)
+    print("is correct? ", correct, "-", top1_correct,\
+          " |  answer:", idx[0], "-", top1_idx[0], " / gt:  ", gt[0])
+
+
+    fig = plt.figure()
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax1.imshow(vis_dists, cmap=plt.cm.Blues)
+    ax2.imshow(row_sum, cmap=plt.cm.Blues)
+    plt.show()
+
+def compute_best_accuracy(logit_list, gts, k, T=1.0):
+    assert type(logit_list) == type(list()), \
+        "logits should be list() for computing oracle accuracy"
+
+    m = len(logit_list)
+    B = logit_list[0].size(0)
+    pairs, _ = get_combinations(m, 2)
+    combinations, inverse_combinations = get_combinations(m, k)
+    cbn_pairs, _ = get_combinations(k, 2)
+
+    # compute pair similarity
+    dists = {}
+    tmp_logits = [F.softmax(logit/T, dim=1) for logit in logit_list] # m*[B,num_answers]
+    #tmp_logits = logit_list
+    for p in pairs:
+        pair_name = "{}-{}".format(p[0], p[1])
+        dists[pair_name] = compute_distance(
+                #tmp_logits[p[0]], tmp_logits[p[1]], normalize=False) # num_pairs*[B]
+                tmp_logits[p[0]], tmp_logits[p[1]], normalize=False) # num_pairs*[B]
+
+    # compute best combination
+    variances = [] # num_cbn*[B]
+    for cbn in combinations: # cbn: [012], [013], [014], ...
+        scores = [] # num_cp*[B]
+        for cp in cbn_pairs: # cp: [01], [02], [12]
+            name = "{}-{}".format(cbn[cp[0]], cbn[cp[1]])
+            #print(name)
+            scores.append(dists[name])
+        variances.append(torch.stack(scores, dim=1).sum(dim=1))
+
+    _, idx = torch.stack(variances, dim=1).max(dim=1)
+    #_, idx = torch.stack(variances, dim=1).min(dim=1)
+    idx = net_utils.get_data(idx, to_clone=False)
+
+    # compute final accuracy
+    prob_list = [F.softmax(logit, dim=1) for logit in logit_list] # m*[B,num_answers]
+    selected_probs = []
+    selected_mean_probs = []
+    for b in range(B):
+        #best_cbn_idx = combinations[idx[b]]
+        best_cbn_idx = combinations[idx[b]]
+
+        # [k,A] -> [A]
+        ith_prob_list = [prob_list[i][b] for i in best_cbn_idx]
+        ith_prob = torch.stack(ith_prob_list, dim=0) # [k,A]
+        selected_probs.append(ith_prob) # B*[k,A]
+        selected_mean_probs.append(torch.mean(ith_prob, dim=0)) # B*[k,A]
+
+    best_logits = torch.stack(selected_probs, dim=1) # [k,B,A]
+    best_logits = [best_logits[i] for i in range(k)]
+
+    v, idx = net_utils.get_data(
+            torch.stack(selected_mean_probs, dim=0)).max(dim=1) # [B,A] -> [B]
+    num_correct = torch.sum(torch.eq(idx, gts))
+    return num_correct, B, best_logits
 
 def compute_kl_div(inputs, targets, tau=-1, \
                     apply_softmax_on_target=True, reduce=False):
@@ -78,6 +232,7 @@ def compute_kl_div(inputs, targets, tau=-1, \
     logP = F.log_softmax(inputs, dim=1)
     if apply_softmax_on_target:
         targets = F.softmax(targets, dim=1)
+    #kld_loss = -(targets * logP).sum(dim=1)
     kld_loss = -(targets * logP).mean(dim=1)
 
     if reduce:

@@ -11,6 +11,8 @@ from datetime import datetime
 from collections import OrderedDict
 
 import torch
+import torch.utils.data as data
+import torch.nn.functional as F
 
 from src.dataset import clevr_dataset, vqa_dataset
 from src.model import building_blocks, building_networks
@@ -44,6 +46,38 @@ def get_dataset(dataset):
     else:
         raise NotImplementedError("Not supported model type ({})".format(dataset))
     return D
+
+def get_loader(dataset, loader_name=[], loader_configs=[], num_workers=2):
+    assert len(loader_name) > 0
+    dsets, L = {}, {}
+    for li,ln in enumerate(loader_name):
+        dsets[ln] = dataset.DataSet(loader_configs[li])
+        L[ln] = data.DataLoader( \
+                dsets[ln], batch_size=loader_configs[li]["batch_size"], \
+                num_workers=num_workers,
+                shuffle=False, collate_fn=dataset.collate_fn)
+    return dsets, L
+
+def factory_model(config, M, dset, ckpt_path):
+    net = M(config)
+    net.bring_loader_info(dset)
+    # ship network to use gpu
+    if config["model"]["use_gpu"]:
+        net.gpu_mode()
+
+    # load checkpoint
+    if len(ckpt_path) > 0:
+        if not (net.classname == "ENSEMBLE" and config["model"]["version"] == "IE"):
+            assert os.path.exists(ckpt_path), \
+                "Checkpoint does not exists ({})".format(ckpt_path)
+            net.load_checkpoint(ckpt_path)
+
+    # If checkpoint is already applied with curriculum learning
+    apply_cc_after = utils.get_value_from_dict(
+            config["model"], "apply_curriculum_learning_after", -1)
+    if (apply_cc_after > 0) and (epoch >= apply_cc_after):
+        net.apply_curriculum_learning()
+    return net
 
 def create_save_dirs(config):
     """ Create neccessary directories for training and evaluating models
@@ -202,6 +236,94 @@ def evaluate_calibration(config, loader, net, epoch, logger_name="epoch", mode="
     net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
     """
 
+def test_inference(config, loader, net):
+
+    net.eval_mode() # set network as evalmode
+    net.reset_status()
+
+    """ Run validating network """
+    ii = 0
+    print_every = 50
+    counter = OrderedDict()
+    counter["top1-avg"] = accumulator.Accumulator("top1-avg")
+    counter["acc-1"] = accumulator.Accumulator("acc-1")
+    counter["acc-2"] = accumulator.Accumulator("acc-2")
+    for batch in tqdm(loader):
+        ii += 1
+        # forward the network
+        outputs = net.predict(batch)
+        logits = outputs[0][0]
+        gts = batch[0][-1][0]
+
+        mode = 1
+        if net.classname in ["ENSEMBLE"]:
+            # compute top1-avg
+            B = logits[0].size(0)
+            prob_list = [F.softmax(logit, dim=1) for logit in logits]
+            probs = torch.mean(torch.stack(prob_list, 0 ), dim=0)
+            _, idx = net_utils.get_data(probs).max(dim=1)
+            mask = torch.eq(idx, gts)
+            num_correct = torch.sum(mask)
+            #print("ENS", mask.view(1,-1))
+            top1 = num_correct / B
+            counter["top1-avg"].add(num_correct, B)
+
+            if mode == 1:
+                masks, true_masks = net.get_oracle_mask(logits, gts)
+                print(torch.stack(masks, 0))
+                print(torch.stack(true_masks, 0))
+                cidx = 0
+                diff = masks[cidx] - masks[cidx+1]
+                stack_mask = torch.stack(true_masks, dim=0)
+                idx = stack_mask.long().sum(dim=0).nonzero()
+                for i in idx:
+                    cidx = stack_mask[:,i[0]].nonzero()
+                    print("\n========== at", i[0], " | correct model: ",
+                          #"-".join(c[0] for c in cidx[0])
+                          cidx, " | gt: ", gts[i][0])
+                    net_utils.compute_single_variance(
+                        net_utils.make_list_at(logits, i[0]), gts[i]
+                    )
+
+            else:
+                #k = config["model"]["num_overlaps"]
+                k = 2
+                num_correct, B, tmp_logit_list = \
+                        net_utils.compute_best_accuracy(logits, gts, k, 1)
+                acc1 = num_correct / B
+                counter["acc-1"].add(num_correct, B)
+
+                #num_correct, B, _ = net_utils.compute_best_accuracy(
+                #        tmp_logit_list, gts, 1, 1)
+                acc2 = num_correct / B
+                counter["acc-2"].add(num_correct, B)
+
+        else:
+            raise NotImplementedError()
+
+        if mode == 0 and (ii % print_every) == 0:
+            print("Iter {} top1: {}  |  acc-1: {}".format(ii, top1, acc1, acc2))
+            txt = ""
+            for k,v in counter.items():
+                txt += "{} = {:.5f}, ".format(v.get_name(), v.get_average())
+            print(txt + \
+                  " acc1 - top1 = {:5f}".format(
+                counter["acc-1"].get_average()-counter["top1-avg"].get_average())
+                  + " acc2 - top1 = {:5f}".format(
+                counter["acc-2"].get_average()-counter["top1-avg"].get_average())
+                  )
+
+        if (config["misc"]["debug"]) and (ii > 2):
+            break
+        # end for batch in loader
+
+    if mode == 0:
+        txt = "Final scores ==> "
+        for k,v in counter.items():
+            txt += ", {} = {:.5f}".format(v.get_name(), v.get_average())
+        print(txt)
+
+
 """ get assignment values for data """
 def reorder_assignments_using_qst_ids(origin_qst_ids, qst_ids, assignments, is_subset=False):
     # reordering assignments along with original data order
@@ -297,7 +419,7 @@ def compute_sample_mean_per_class(config, L, net, prefix=""):
 
     assert net.classname == "INFERENCE", \
         "Currently only suppert ensemble inference network"
-    assert config["flag_inference"]
+    assert config["model"]["save_sample_mean"]
     assert config["model"]["output_with_internal_values"]
 
     # prepare directory for saving sample mean
@@ -318,7 +440,7 @@ def compute_sample_mean_per_class(config, L, net, prefix=""):
     num_models = net.num_base_models
     num_answers = config["model"]["num_labels"]
     sample_means = {"M{}".format(m):[] for m in range(num_models)}
-    sample_cnt  = {"M{}".format(m):[] for m in range(num_models)}
+    sample_cnt = np.zeros((num_answers))
 
     i = 1
     for batch in tqdm(L):
@@ -327,13 +449,16 @@ def compute_sample_mean_per_class(config, L, net, prefix=""):
         outputs = net.evaluate(batch)
         gt_answers = batch[0][-1]
         if type(gt_answers) == type(list()):
-            gt_answers = gt_answers[0]
+            gt_answers = gt_answers[1] # all answers
 
         assert len(outputs) > 0
         internal_values = outputs[2] # m * [internal_1, internal_2, ..., internal_n]
 
         for b in range(B):
             gt_idx = gt_answers[b]
+            gt_idx = np.unique(gt_idx.numpy())
+            for idx in gt_idx:
+                sample_cnt[idx] += 1
             for m in range(num_models):
                 modelname = "M{}".format(m)
                 num_internal = len(internal_values[m])
@@ -342,19 +467,16 @@ def compute_sample_mean_per_class(config, L, net, prefix=""):
                         sample_means[modelname].append(
                             np.zeros((num_answers, internal_values[m][iv].size(1)))
                         )
-                        sample_cnt[modelname].append(
-                            np.zeros((num_answers))
-                        )
-                    sample_means[modelname][iv][gt_idx] += \
-                        net_utils.get_data(internal_values[m][iv][b]).numpy()
-                    sample_cnt[modelname][iv][gt_idx] += 1
+                    for idx in gt_idx:
+                        sample_means[modelname][iv][idx] += \
+                            net_utils.get_data(internal_values[m][iv][b]).numpy()
             i += 1
 
     # compute mean (divide by counts)
     for modelname in sample_means.keys():
-        for i,(s,c) in enumerate(zip(sample_means[modelname], sample_cnt[modelname])):
+        for i,s in enumerate(sample_means[modelname]):
             # TODO: deal with nan
-            sample_means[modelname][i] = s / c[:, np.newaxis]
+            sample_means[modelname][i] = s / sample_cnt[:, np.newaxis]
 
     # save sample mean & count
     save_path = os.path.join(save_dir, "sample_mean.pkl")
