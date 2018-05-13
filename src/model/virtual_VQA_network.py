@@ -229,7 +229,7 @@ class VirtualVQANetwork(VirtualNetwork):
             self.origin_test_qst_ids = dataset.get_qst_ids()
 
         if (self.fetching_answer_option == "all_answers") \
-                and (self.classname != "ENSEMBLE"):
+                and (self.classname not in ["ENSEMBLE", "ASSIGNMENT"]):
             loss_reduce = utils.get_value_from_dict(
                 self.config["model"], "loss_reduce", True)
             self.criterion = building_blocks.MultipleCriterion(
@@ -278,7 +278,7 @@ class VirtualVQANetwork(VirtualNetwork):
         Args:
             logits: list of m * [batch_size, num_answers]
         """
-        if self.classname == "ENSEMBLE":
+        if self.classname in ["ENSEMBLE", "ASSIGNMENT"]:
             # compute probabilities and average them
             B = logits[0].size(0)
             if self.prob_list == None:

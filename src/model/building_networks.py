@@ -246,9 +246,9 @@ class Ensemble(VirtualVQANetwork):
         if self.config["misc"]["dataset"] != "vqa":
             epoch = int(prefix.split("_")[-1])
             self.visualize_confusion_matrix(epoch, prefix=mode)
-            if self.config["model"]["version"] != "IE":
-                self.save_assignments(prefix, mode)
-                #self.visualize_assignments(prefix=prefix, mode=mode)
+        if self.config["model"]["version"] != "IE":
+            self.save_assignments(prefix, mode)
+            #self.visualize_assignments(prefix=prefix, mode=mode)
 
         """ given sample data """
         if (data is not None):# and (self.config["misc"]["dataset"] != "vqa"):
@@ -1207,5 +1207,185 @@ class MutanWrapper(VirtualVQANetwork):
         # model: mutan
         config["wtoi"] = loader.get_wtoi()
         config["atoi"] = loader.get_atoi()
+
+        return config
+
+class AssignmentNetwork(VirtualVQANetwork):
+    def __init__(self, config, verbose=True):
+        super(AssignmentNetwork, self).__init__(config, verbose) # Must call super __init__()
+
+        self.classname = "ASSIGNMENT"
+        self.use_gpu = utils.get_value_from_dict(
+            config["model"], "use_gpu", True)
+
+        # options for ensemble model
+        self.ensemble_model_type = utils.get_value_from_dict(
+            config["model"], "ensemble_model_type", "saaa")
+        self.M = cmf.get_model(self.ensemble_model_type)
+        ensemble_ckpt_path = utils.get_value_from_dict(
+            config["model"], "ensemble_model_ckpt_path", True)
+
+        # options for loss
+        self.use_ensemble_loss = utils.get_value_from_dict(
+            config["model"], "use_ensemble_loss", False)
+
+        # load pre-trained ensemble model
+        self.num_models = utils.get_value_from_dict(
+                config["model"], "num_models", 5)
+        self.ensemble_model = []
+        self.num_ensemble_models = len(ensemble_ckpt_path)
+        ensemble_config = {
+            "model": config["model"],
+            "misc": config["misc"],
+            "train_loader": config["train_loader"],
+            "test_loader": config["test_loader"],
+            "optimize": config["optimize"],
+            "evaluation": config["evaluation"],
+            "logging": config["logging"]
+        }
+        copy.deepcopy(config["model"])
+        for m in range(self.num_ensemble_models):
+            self.ensemble_model.append(self.M(ensemble_config))
+            self.ensemble_model[m].load_checkpoint(ensemble_ckpt_path[m])
+            if self.use_gpu and torch.cuda.is_available():
+                self.ensemble_model[m].cuda()
+            self.ensemble_model[m].eval() # set to eval mode for ensemble model
+            self.logger["train"].info( \
+                    "{}th ensemble-net is initialized from {}".format( \
+                        m, ensemble_ckpt_path[m]))
+
+        # build assignment network
+        self.assignment = building_blocks.AssignmentModel(config["model"])
+        self.criterion = building_blocks.AssignmentCriterion()
+
+        # set layer names (all and to be updated)
+        self.model_list = ["assignment", "criterion"]
+        self.models_to_update = ["assignment", "criterion"]
+
+    def forward(self, data):
+        """ Forward network
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels]
+        Returns:
+            logits: logits of network which is an input of criterion
+            others: intermediate values (e.g. attention weights)
+        """
+        self.ensemble_logits = []
+        for m in range(self.num_models):
+            # TODO: using volatile input data
+            net_output = self.ensemble_model[m](data)
+            self.ensemble_logits.append(net_output[0])
+
+        self.logits= self.assignment(data)
+
+        criterion_inp = [[self.logits, self.ensemble_logits]]
+        return criterion_inp
+
+    def reset_status(self, init_reset=False):
+        """ Reset (initialize) metric scores or losses (status).
+        """
+        if self.status == None:
+            self.status = OrderedDict()
+            self.status["loss"] = 0
+            self.status["top1-avg"] = 0
+            self.status["top1-assign"] = 0
+        else:
+            for k in self.status.keys():
+                self.status[k] = 0
+
+        self.gt_list = []
+        self.all_predictions = []
+
+    def compute_top1_assignment_acc(self, gts):
+        B = self.logits.size(0)
+        assign_weight = F.sigmoid(self.logits)
+        weighted_probs = [self.prob_list[m]*assign_weight[:,m:m+1] \
+                            for m in range(self.num_models)]
+        val, idx = (sum(weighted_probs)/self.num_models).max(dim=1)
+        idx = net_utils.get_data(idx)
+        num_correct = torch.eq(idx, gts).sum()
+        self.status["top1-assign"] = num_correct / B
+        self.counters["top1-assign"].add(num_correct, B)
+        predictions = idx
+
+        return predictions
+
+    def compute_status(self, logits, gts):
+        if type(gts) == type(list()):
+            gts = gts[0] # we use most frequent answers for vqa
+        self.prob_list = None
+
+        self.compute_top1_accuracy(self.ensemble_logits, gts)
+        self.top1_predictions = self.compute_top1_assignment_acc(gts)
+        self.attach_predictions()
+
+    def save_results(self, data, prefix, mode="train", compute_loss=False):
+        """ Get qualitative results (attention weights) and save them
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
+        """
+        # save predictions
+        self.save_predictions(prefix, mode)
+
+    def _create_counters(self):
+        self.counters = OrderedDict()
+        self.counters["loss"] = accumulator.Accumulator("loss")
+        self.counters["top1-avg"] = accumulator.Accumulator("top1-avg")
+        self.counters["top1-assign"] = accumulator.Accumulator("top1-assign")
+
+    def print_status(self, epoch, iteration, prefix="", mode="train", is_main_net=True):
+
+        if mode == "train":
+            log = getattr(self.logger["train"], "info")
+        else:
+            log = getattr(self.logger["train"], "debug")
+
+        if is_main_net:
+            # prepare txt to print
+            jump = 3
+            txt = "epoch {} step {}".format(epoch, iteration)
+            for k,v in self.status.items():
+                txt += ", {} = {:.3f}".format(k, v)
+            txt += ", ({}|{})".format(utils.label2string(
+                        self.itoa, self.top1_predictions[0]), self.top1_gt)
+
+            if mode != "eval":
+                assign_labels = net_utils.get_data(self.criterion.correct_labels)
+                assign_pred = net_utils.get_data(F.sigmoid(self.logits))
+                txt += "\n\t\t\t\t\t gt-labels  = {}, ".format(
+                    "|".join("{:.3f}".format(assign_labels[0,i])
+                             for i in range(assign_labels.size(1))))
+                txt += "\n\t\t\t\t\t assign-pred= {}, ".format(
+                    "|".join("{:.3f}".format(assign_pred[0,i])
+                             for i in range(assign_pred.size(1))))
+
+            # print learning information
+            log(txt)
+
+            if self.use_tf_summary and self.training_mode:
+                self.write_status_summary(iteration)
+
+    @classmethod
+    def model_specific_config_update(cls, config):
+        assert type(config) == type(dict()), \
+            "Configuration shuold be dictionary"
+
+        if config["model"]["ensemble_model_type"] == "saaa":
+            config = SAAA.model_specific_config_update(config)
+        elif config["model"]["ensemble_model_type"] == "san":
+            config = SAN.model_specific_config_update(config)
+        elif config["model"]["ensemble_model_type"] == "sharedsaaa":
+            config = SharedSAAA.model_specific_config_update(config)
+        else:
+            raise NotImplementedError("Base model type: {}".format(
+                    m_config["ensemble_model_type"]))
+
+        m_config = config["model"]
+        # for ensemble models
+        m_config["qst_emb_dim"] = m_config["rnn_hidden_dim"]
+        # for assignment network
+        m_config["assignment_fusion_inp1_dim"] = m_config["rnn_hidden_dim"]
+        m_config["assignment_mlp_inp_dim"] = m_config["assignment_fusion_dim"]
+        m_config["assignment_mlp_out_dim"] = m_config["num_models"]
 
         return config

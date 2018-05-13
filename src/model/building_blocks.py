@@ -341,7 +341,7 @@ class AssignmentModel(nn.Module):
         name = "assignment"
 
         # build layers
-        self.img_emb_layer = Embedding2D(config, name="assignment_img")
+        #self.img_emb_layer = Embedding2D(config, name="assignment_img")
         self.qst_emb_layer = QuestionEmbedding(config)
         layers = []
         layers.append(MultimodalFusion(config, name))
@@ -350,11 +350,12 @@ class AssignmentModel(nn.Module):
 
     def forward(self, data):
         # fetch data
-        imgs = data[0]
+        img_feats = data[0]
         qst_labels = data[1]
         qst_len = data[2]
 
-        img_feats = self.img_emb_layer(imgs)
+        img_feats = img_feats \
+                / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
         qst_feats = self.qst_emb_layer(qst_labels, qst_len)
         assignment_logits = self.assign_layer([qst_feats, img_feats])
         return assignment_logits
@@ -1151,3 +1152,54 @@ class MultipleCriterion(nn.Module):
             loss = loss.mean() # scalar
 
         return loss
+
+class AssignmentCriterion(nn.Module):
+    def __init__(self, use_ensemble_loss=False):
+        super(AssignmentCriterion, self).__init__() # Must call super __init__()
+
+        self.assign_criterion = nn.BCEWithLogitsLoss()
+        self.use_ensemble_loss = use_ensemble_loss
+        if self.use_ensemble_loss:
+            self.ensemble_criterion = nn.NLLLoss()
+
+    def forward(self, inp, labels):
+        """
+        Args:
+            inp: two items 1)logits of assignment network; [B,C]
+                           2)logit lists of ensemble model; m*[B,C]
+            labels: list of [answers, all_answers, mask]
+                - answers: do not use this
+                - all_answers: all answers; [B, A]
+                - mask: mask of answers; [B, A]
+        """
+        assign_logits = inp[0]
+        ensemble_logits = inp[1]
+        if type(labels) == type(list()):
+            gts = labels[0]
+        else:
+            gts = labels
+        B = assign_logits.size(0)
+        num_models = len(ensemble_logits)
+
+        # obtain labels
+        correct_mask = []
+        ensemble_probs = [F.softmax(logit, dim=1) \
+                              for logit in ensemble_logits]
+        for m in range(num_models):
+            val, idx = ensemble_probs[m].max(dim=1)
+            mask = torch.eq(idx, gts)
+            correct_mask.append(mask.data) # m*[B]
+
+        correct_labels = torch.stack(correct_mask, 0).t() # [B,m]
+        self.correct_labels = Variable(correct_labels, requires_grad=False).float()
+        assign_loss = self.assign_criterion(assign_logits, self.correct_labels)
+
+        if self.use_ensemble_loss:
+            assign_weight = F.sigmoid(assign_logits)
+            weighted_ensemble_probs = [ensemble_probs[m]*assign_weight[:,m:m+1] \
+                                       for m in range(num_models)]
+            ensemble_loss = self.ensemble_criterion(
+                    F.log(sum(weighted_ensemble_probs)/num_models), gts)
+            assign_loss += ensemble_loss
+
+        return assign_loss

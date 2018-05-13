@@ -34,6 +34,8 @@ def get_model(base_model_type):
         M = getattr(building_networks, "OnlyQuestion")
     elif base_model_type in ["mutan", "MUTAN"]:
         M = getattr(building_networks, "MutanWrapper")
+    elif base_model_type in ["assignment", "ASSIGNMENT"]:
+        M = getattr(building_networks, "AssignmentNetwork")
     else:
         raise NotImplementedError("Not supported model type ({})".format(base_model_type))
     return M
