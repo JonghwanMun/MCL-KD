@@ -242,10 +242,6 @@ class Ensemble(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix, mode)
-        # save visualization of confusion matrix for each model
-        if self.config["misc"]["dataset"] != "vqa":
-            epoch = int(prefix.split("_")[-1])
-            self.visualize_confusion_matrix(epoch, prefix=mode)
         if self.config["model"]["version"] != "IE":
             self.save_assignments(prefix, mode)
             #self.visualize_assignments(prefix=prefix, mode=mode)
@@ -584,9 +580,6 @@ class SAN(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix, mode)
-        if self.config["misc"]["dataset"] != "vqa":
-            epoch = int(prefix.split("_")[-1])
-            self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
@@ -732,9 +725,6 @@ class SAAA(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix, mode)
-        if self.config["misc"]["dataset"] != "vqa":
-            epoch = int(prefix.split("_")[-1])
-            self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
@@ -854,9 +844,6 @@ class SharedSAAA(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix, mode)
-        if self.config["misc"]["dataset"] != "vqa":
-            epoch = int(prefix.split("_")[-1])
-            self.visualize_confusion_matrix(epoch, prefix=mode)
 
         if mode == "train":
             # maintain sample data
@@ -1058,9 +1045,6 @@ class EnsembleInference(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix, mode)
-        if self.config["misc"]["dataset"] != "vqa":
-            epoch = int(prefix.split("_")[-1])
-            self.visualize_confusion_matrix(epoch, prefix=mode)
 
     @classmethod
     def model_specific_config_update(cls, config):
