@@ -657,8 +657,6 @@ class EnsembleLoss(nn.Module):
         self.assignment_with_only_task_loss = \
                 utils.get_value_from_dict(config, "assignment_with_only_task_loss", False)
         if self.use_adaptive_assignment:
-            assert self.k == 1, \
-                "You should set k as 1 if using adaptive assignment ({})".format(self.k)
             self.adaptive_threshold = \
                     utils.get_value_from_dict(config, "adaptive_threshold", 0.8)
         self.apply_uniform_sampling_k = \
@@ -880,18 +878,17 @@ class EnsembleLoss(nn.Module):
                 min_idx = min_idx.cuda()
 
             if self.use_adaptive_assignment:
-                # we adaptively assign models with small difference or large correlation
-                # with the assigned model
-                idx = net_utils.get_data(min_idx) # [1,B]
+                cbn_idx = net_utils.get_data(min_idx) # [k,B]
+                new_assignment = -torch.ones((B, self.m))
+                new_assignment[:,:self.k] = cbn_idx.t()
+                assignment_mask = torch.zeros((B, self.m)).scatter_(1, cbn_idx.t(), 1)
+
+                # check whether top1-avg is correct or not
                 prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
                              for logit in logit_list] # m*[B,C]
                 probs = torch.mean(torch.stack(prob_list, 0 ), dim=0) # [B, num_answers]
                 val, max_idx = probs.max(dim=1)
                 correct_mask = torch.eq(max_idx, labels)
-
-                new_assignment = -torch.ones((B, self.m))
-                new_assignment[:,0] = idx
-                assignment_mask = torch.zeros((B, self.m)).scatter_(1, idx.view(-1,1), 1)
 
                 if correct_mask.sum().data[0] != B:
                     wrong_idx = net_utils.get_data((correct_mask==0).nonzero().squeeze())
