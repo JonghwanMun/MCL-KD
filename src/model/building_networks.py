@@ -618,7 +618,6 @@ class SAN(VirtualVQANetwork):
 
         return config
 
-
 class SAAA(VirtualVQANetwork):
     def __init__(self, config, verbose=True):
         super(SAAA, self).__init__(config, verbose) # Must call super __init__()
@@ -763,6 +762,93 @@ class SAAA(VirtualVQANetwork):
         # for classigication layer
         m_config["answer_mlp_inp_dim"] = m_config["rnn_hidden_dim"] \
                 + (m_config["img_emb_dim"] * m_config["num_stacks"])
+        m_config["answer_mlp_out_dim"] = m_config["num_labels"]
+
+        return config
+
+class SimpleMLP(VirtualVQANetwork):
+    def __init__(self, config, verbose=True):
+        super(SimpleMLP, self).__init__(config, verbose) # Must call super __init__()
+
+        self.classname = "SimpleMLP"
+        self.use_gpu = utils.get_value_from_dict(
+            config["model"], "use_gpu", True)
+        loss_reduce = utils.get_value_from_dict(
+            config["model"], "loss_reduce", True)
+
+        # options for deep image embedding
+        self.use_deep_img_emb = utils.get_value_from_dict(
+            config["model"], "use_deep_img_embedding", False)
+        # options for applying l2-norm
+        self.apply_l2_norm = \
+            utils.get_value_from_dict(
+                config["model"], "apply_l2_norm", True)
+
+        # build layers
+        if self.use_deep_img_emb:
+            self.img_emb_net = building_blocks.ResBlock2D(config["model"], "img_emb")
+        self.qst_emb_net = building_blocks.QuestionEmbedding(config["model"])
+        self.classifier = building_blocks.MLP(config["model"], "answer")
+        self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
+
+        # set layer names (all and to be updated)
+        self.model_list = ["qst_emb_net", "classifier", "criterion"]
+        self.models_to_update = ["qst_emb_net", "classifier", "criterion"]
+        if self.use_deep_img_emb:
+            self.model_list.append("img_emb_net")
+            self.models_to_update.append("img_emb_net")
+
+        self.config = config
+
+    def forward(self, data):
+        """ Forward network
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels]
+        Returns:
+            logits: logits of network which is an input of criterion
+            others: intermediate values (e.g. attention weights)
+        """
+        # forward network
+        # applying l2-norm for img features
+        img_feats = data[0]
+        if self.apply_l2_norm:
+            img_feats = img_feats \
+                / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
+        if self.use_deep_img_emb:
+            img_emb_out = self.img_emb_net(img_feats)
+            img_feats = img_emb_out["feats"]
+        img_feats = img_feats.mean(2).mean(2)
+        qst_feats = self.qst_emb_net(data[1], data[2])
+        # concatenate attended feature and question feat
+        multimodal_feats = torch.cat((img_feats, qst_feats), 1)
+        self.logits = self.classifier(multimodal_feats) # criterion input
+
+        criterion_inp = self.logits
+        out = [criterion_inp]
+        return out
+
+    def save_results(self, data, prefix, mode="train", compute_loss=False):
+        """ Get qualitative results (attention weights) and save them
+        Args:
+            data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_paths]
+        """
+        # save predictions
+        self.save_predictions(prefix, mode)
+
+    @classmethod
+    def model_specific_config_update(cls, config):
+        assert type(config) == type(dict()), \
+            "Configuration shuold be dictionary"
+
+        m_config = config["model"]
+        # for image embedding layer
+        if "img_emb_res_block_2d_out_dim" in m_config.keys():
+            m_config["img_emb_dim"] = m_config["img_emb_res_block_2d_out_dim"]
+        # for attention layer
+        m_config["qst_emb_dim"] = m_config["rnn_hidden_dim"]
+        # for classigication layer
+        m_config["answer_mlp_inp_dim"] = \
+            m_config["rnn_hidden_dim"] + m_config["img_emb_dim"]
         m_config["answer_mlp_out_dim"] = m_config["num_labels"]
 
         return config

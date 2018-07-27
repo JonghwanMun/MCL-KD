@@ -22,6 +22,8 @@ from src.utils import accumulator, timer, utils, io_utils, net_utils
 def get_model(base_model_type):
     if base_model_type in ["san", "SAN"]:
         M = getattr(building_networks, "SAN")
+    elif base_model_type in ["mlp", "MLP"]:
+        M = getattr(building_networks, "SimpleMLP")
     elif base_model_type in ["saaa", "SAAA"]:
         M = getattr(building_networks, "SAAA")
     elif base_model_type in ["sharedsaaa", "SharedSAAA"]:
