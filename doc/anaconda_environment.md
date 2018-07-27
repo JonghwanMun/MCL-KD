@@ -14,6 +14,11 @@ source activate vqa-kdmcl
 
 ### 2. Required Packages
 
+#### Pytorch
+```bash
+conda install -y pytorch=0.3.1 torchvision=0.2.0 cuda80 -c soumith
+```
+
 #### TensorFlow for tensorboard (python 3.5)
 We install CPU-version of TensorFlow since we use only tensorboard.
 ```bash
@@ -24,9 +29,8 @@ pip install --ignore-installed --upgrade https://storage.googleapis.com/tensorfl
 This project requires several Python packages to be installed.<br />
 You can install the packages by typing:
 ```bash
-conda install nb_conda numpy scipy jupyter matplotlib pillow nltk tqdm pyyaml seaborn scikit-image scikit-learn h5py
-conda install -c conda-forge colorlog 
-conda install -c conda-forge coloredlogs
+conda install -y nb_conda numpy scipy jupyter matplotlib pillow nltk tqdm pyyaml seaborn scikit-image scikit-learn h5py
+conda install -y -c conda-forge colorlog coloredlogs
 ```
 
 #### Python packages through pip
