@@ -217,13 +217,17 @@ class VirtualVQANetwork(VirtualNetwork):
     def bring_loader_info(self, dataset):
         if type(dataset) == type(dict()):
             self.itow = dataset["train"].get_itow()
+            self.wtoi = dataset["train"].get_wtoi()
             self.itoa = dataset["train"].get_itoa()
+            self.atoi = dataset["train"].get_atoi()
             self.fetching_answer_option = dataset["train"].fetching_answer_option
             self.origin_train_qst_ids = dataset["train"].get_qst_ids()
             self.origin_test_qst_ids = dataset["test"].get_qst_ids()
         else:
             self.itow = dataset.get_itow()
+            self.wtoi = dataset.get_wtoi()
             self.itoa = dataset.get_itoa()
+            self.atoi = dataset.get_atoi()
             self.fetching_answer_option = dataset.fetching_answer_option
             self.origin_train_qst_ids = dataset.get_qst_ids()
             self.origin_test_qst_ids = dataset.get_qst_ids()
@@ -560,6 +564,11 @@ class VirtualVQANetwork(VirtualNetwork):
         config["model"]["word_emb_padding_idx"] = loader.get_idx_empty_word()
         # model: classifier and assignment layer
         config["model"]["num_labels"] = loader.get_num_answers()
+
+        if "base_model_type" in config["model"].keys() \
+                and config["model"]["base_model_type"] == "mutan":
+            config["wtoi"] = loader.get_wtoi()
+            config["atoi"] = loader.get_atoi()
 
         return config
 

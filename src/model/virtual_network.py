@@ -27,6 +27,7 @@ class VirtualNetwork(nn.Module):
         self.use_tf_summary = False
         self.it = 0 # it: iteration
         self.update_every = 1
+        self.debug_mode = False
         self.qsts = None
 
         self._create_counters()
@@ -76,7 +77,7 @@ class VirtualNetwork(nn.Module):
 
         if self.optimizer == None:
             self.optimizer = torch.optim.Adam(self.get_parameters(), lr=lr)
-            self.optimizer.zero_grad() # set gradients as zero before update
+            self.optimizer.zero_grad() # set gradients as zero while initializing
 
         self.it +=1
         loss = loss / self.update_every
@@ -250,7 +251,8 @@ class VirtualNetwork(nn.Module):
         self.use_tf_summary = True
         self.summary = PytorchSummary(tensorboard_dir)
 
-        self.write_params_summary(epoch=0)
+        if self.debug_mode:
+            self.write_params_summary(epoch=0)
 
     def write_params_summary(self, epoch):
         if self.models_to_update is None:

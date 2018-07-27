@@ -57,6 +57,8 @@ def _set_model(params):
         M = getattr(building_networks, "Ensemble")
     elif params["model_type"] == "saaa":
         M = getattr(building_networks, "SAAA")
+    elif params["model_type"] == "mutan":
+        M = getattr(building_networks, "MutanWrapper")
     else:
         raise NotImplementedError("Not supported model type ({})".format(params["model_type"]))
 

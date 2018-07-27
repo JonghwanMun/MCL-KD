@@ -77,7 +77,7 @@ class Ensemble(VirtualVQANetwork):
                 self.base_model[i].load_checkpoint(base_model_ckpt_path[i])
                 if self.use_gpu and torch.cuda.is_available():
                     self.base_model[i].cuda()
-                self.base_model[i].eval() # set to eval mode for base model
+                self.base_model[i].train() # set to eval mode for base model
                 self.logger["train"].info( \
                         "{}th base-net is initialized from {}".format( \
                         i, base_model_ckpt_path[i]))
@@ -247,7 +247,7 @@ class Ensemble(VirtualVQANetwork):
             #self.visualize_assignments(prefix=prefix, mode=mode)
 
         """ given sample data """
-        if (data is not None):# and (self.config["misc"]["dataset"] != "vqa"):
+        if (data is not None) and False:# and (self.config["misc"]["dataset"] != "vqa"):
             # maintain sample data
             self._set_sample_data(data)
 
@@ -513,6 +513,8 @@ class Ensemble(VirtualVQANetwork):
             config = SAN.model_specific_config_update(config)
         elif m_config["base_model_type"] == "sharedsaaa":
             config = SharedSAAA.model_specific_config_update(config)
+        elif m_config["base_model_type"] == "mutan":
+            config = MutanWrapper.model_specific_config_update(config)
         else:
             raise NotImplementedError("Base model type: {}".m_config["base_model_type"])
 
@@ -1148,9 +1150,9 @@ class MutanWrapper(VirtualVQANetwork):
             config["model"], "loss_reduce", True)
 
         # build layers
-        self.mutan = external_models.factory(config["model"],
-                                            config["wtoi"], config["atoi"],
-                                            cuda=self.use_gpu, data_parallel=False)
+        self.mutan = external_models.factory(
+                config["model"], config["wtoi"], config["atoi"],
+                cuda=self.use_gpu, data_parallel=False)
         self.criterion = nn.CrossEntropyLoss(reduce=loss_reduce)
 
         # set layer names (all and to be updated)

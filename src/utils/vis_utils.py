@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 from textwrap import wrap
 import matplotlib.pyplot as plt
+plt.switch_backend("agg")
 from matplotlib import gridspec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import scipy as sp
