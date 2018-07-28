@@ -515,8 +515,10 @@ class Ensemble(VirtualVQANetwork):
             config = SharedSAAA.model_specific_config_update(config)
         elif m_config["base_model_type"] == "mutan":
             config = MutanWrapper.model_specific_config_update(config)
+        elif m_config["base_model_type"] == "mlp":
+            config = SimpleMLP.model_specific_config_update(config)
         else:
-            raise NotImplementedError("Base model type: {}".m_config["base_model_type"])
+            raise NotImplementedError("Base model type: {}".format(m_config["base_model_type"]))
 
         if config["model"]["use_assignment_model"]:
             if m_config["base_model_type"] == "san":
