@@ -113,6 +113,7 @@ class Ensemble(VirtualVQANetwork):
             self.model_list.append("assignment_model")
             self.models_to_update.append("assignment_model")
 
+        """
         # create status and counter for each model
         if self.config["model"]["verbose_all"]:
             for m in range(self.num_models):
@@ -120,6 +121,7 @@ class Ensemble(VirtualVQANetwork):
             for m in range(self.num_models):
                 model_name = "M{}".format(m)
                 self.counters[model_name] = accumulator.Accumulator(model_name)
+        """
 
     def forward(self, data):
         """ Forward network

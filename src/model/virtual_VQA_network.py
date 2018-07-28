@@ -397,7 +397,6 @@ class VirtualVQANetwork(VirtualNetwork):
         # compute oracle accuracy
         if self.prob_list == None:
             self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
-        """
         self.base_top1_predictions = []
         for m in range(self.num_models):
             val, idx = self.prob_list[m].max(dim=1)
@@ -409,6 +408,7 @@ class VirtualVQANetwork(VirtualNetwork):
             else:
                 correct_mask += torch.eq(idx, gts)
 
+        """
         for n in at:
             mask = (correct_mask >= n)
             num_correct = mask.sum()
