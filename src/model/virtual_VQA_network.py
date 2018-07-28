@@ -315,6 +315,7 @@ class VirtualVQANetwork(VirtualNetwork):
         self.counters["top1-avg"].add(num_correct, B)
         self.top1_gt = utils.label2string(self.itoa, gts[0])
 
+        """
         if self.classname == "ENSEMBLE":
             # compute probabilities and average them
             B = logits[0].size(0)
@@ -339,6 +340,7 @@ class VirtualVQANetwork(VirtualNetwork):
                 model_name = "M{}".format(m)
                 self.status[model_name] = num_correct / B
                 self.counters[model_name].add(num_correct, B)
+        """
 
     def get_oracle_mask(self, logit_list, gts):
         """ Compute Oracle Accuracy
@@ -395,6 +397,7 @@ class VirtualVQANetwork(VirtualNetwork):
         # compute oracle accuracy
         if self.prob_list == None:
             self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]
+        """
         self.base_top1_predictions = []
         for m in range(self.num_models):
             val, idx = self.prob_list[m].max(dim=1)
@@ -411,6 +414,7 @@ class VirtualVQANetwork(VirtualNetwork):
             num_correct = mask.sum()
             self.status["oracle-{}".format(n)] = num_correct / B
             self.counters["oracle-{}".format(n)].add(num_correct, B)
+        """
 
         mask = (correct_mask > 0)
         num_correct = mask.sum()

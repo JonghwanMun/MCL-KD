@@ -287,7 +287,7 @@ class VirtualNetwork(nn.Module):
         # prepare txt to print
         txt = "[{}] {} epoch".format(mode, epoch)
         for k,v in self.counters.items():
-            txt += ", {} = {:.3f}".format(v.get_name(), v.get_average())
+            txt += ", {} = {:.5f}".format(v.get_name(), v.get_average())
 
         # print learning information at this epoch
         assert logger_name in self.logger.keys(), \

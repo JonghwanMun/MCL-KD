@@ -984,7 +984,7 @@ class EnsembleLoss(nn.Module):
                     total_loss = total_loss / B
                 # End
 
-            if self.iteration % self.print_every == 0:
+            if False and (self.iteration % self.print_every == 0):
                 num_combinations = oracle_loss_tensor.size(0)
                 txt = txt.format( \
                     "/".join("{:.3f}".format(
@@ -1024,7 +1024,7 @@ class EnsembleLoss(nn.Module):
         else:
             self.assignment_loss = None
 
-        if self.version != "IE":
+        if False and self.version != "IE":
             max_k = min_idx.size()[0]
             assign_num = []
             for i in range(self.m):

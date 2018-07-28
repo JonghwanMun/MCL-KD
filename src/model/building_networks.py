@@ -326,10 +326,10 @@ class Ensemble(VirtualVQANetwork):
             if self.config["model"]["use_assignment_model"]:
                 self.status["sel-loss"] = 0
             self.status["top1-avg"] = 0
-            self.status["top1-max"] = 0
+            #self.status["top1-max"] = 0
             self.status["oracle"] = 0
-            for m in range(self.config["model"]["num_models"]):
-                self.status["oracle-{}".format(m+1)] = 0
+            #for m in range(self.config["model"]["num_models"]):
+            #    self.status["oracle-{}".format(m+1)] = 0
             if self.config["model"]["use_assignment_model"]:
                 self.status["sel-acc"] = 0
         else:
@@ -374,21 +374,10 @@ class Ensemble(VirtualVQANetwork):
         logit_list = net_output[0]
         self.compute_top1_accuracy(logit_list, gts)
         self.compute_oracle_accuracy(logit_list, gts)
-        self.compute_confusion_matrix(logit_list, gts)
-        if self.use_assignment_model:
-            self.compute_assignment_accuracy(
-                logit_list, gts, self.assignment_logits)
-            self.compute_gt_assignment_accuracy(
-                logit_list, gts, self.criterion.assignments)
-            if self.criterion.assignment_loss is not None:
-                self.status["sel-loss"] = \
-                    net_utils.get_data(self.criterion.assignment_loss)[0]
-            else:
-                self.status["sel-loss"] = -1
-            self.counters["sel-loss"].add(self.status["sel-loss"], 1)
+        #self.compute_confusion_matrix(logit_list, gts)
 
         self.attach_predictions()
-        self.attach_assignments(gts)
+        #self.attach_assignments(gts)
 
     def print_status(self, epoch, iteration, prefix="", mode="train", is_main_net=True):
         """ Print status (scores, etc)
@@ -420,6 +409,7 @@ class Ensemble(VirtualVQANetwork):
                     txt += "{} = {:.3f}".format(k, v)
                 else:
                     txt += ", {} = {:.3f}".format(k, v)
+            """
             if (self.config["model"]["version"] != "IE") \
                     and (mode != "eval"):
                 sls = self.criterion.assignments
@@ -430,12 +420,10 @@ class Ensemble(VirtualVQANetwork):
             txt += " ({}->{}/{})".format(
                 "|".join(pred for pred in self.basenet_pred),
                 utils.label2string(self.itoa, self.top1_predictions[0]), self.top1_gt)
+            """
 
             # print learning information
             log(txt)
-
-            if self.use_tf_summary and self.training_mode:
-                self.write_status_summary(iteration)
 
     def _create_counters(self):
         self.counters = OrderedDict()
@@ -443,11 +431,13 @@ class Ensemble(VirtualVQANetwork):
         if self.config["model"]["use_assignment_model"]:
             self.counters["sel-loss"] = accumulator.Accumulator("sel-loss")
         self.counters["top1-avg"] = accumulator.Accumulator("top1-avg")
-        self.counters["top1-max"] = accumulator.Accumulator("top1-max")
+        #self.counters["top1-max"] = accumulator.Accumulator("top1-max")
         self.counters["oracle"] = accumulator.Accumulator("oracle")
+        """
         for m in range(self.config["model"]["num_models"]):
             metric_name = "oracle-{}".format(m+1)
             self.counters[metric_name] = accumulator.Accumulator(metric_name)
+        """
         if self.config["model"]["use_assignment_model"]:
             self.counters["sel-acc"] = accumulator.Accumulator("sel-acc")
 
@@ -1362,7 +1352,6 @@ class AssignmentNetwork(VirtualVQANetwork):
             self.status = OrderedDict()
             self.status["loss"] = 0
             self.status["top1-avg"] = 0
-            self.status["top1-assign"] = 0
         else:
             for k in self.status.keys():
                 self.status[k] = 0
