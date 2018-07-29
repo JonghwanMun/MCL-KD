@@ -244,8 +244,8 @@ class Ensemble(VirtualVQANetwork):
         """
         # save predictions
         self.save_predictions(prefix, mode)
-        if self.config["model"]["version"] != "IE":
-            self.save_assignments(prefix, mode)
+        #if self.config["model"]["version"] != "IE":
+            #self.save_assignments(prefix, mode)
             #self.visualize_assignments(prefix=prefix, mode=mode)
 
         """ given sample data """
