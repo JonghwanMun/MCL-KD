@@ -82,7 +82,7 @@ def adjust_lr(iter, iter_per_epoch, config, min_lr=0.0001):
     if config["decay_every_epoch"] == -1:
         decay_lr = config["init_lr"]
     else:
-        decay_lr = min(min_lr, config["init_lr"] * math.exp(math.log(
+        decay_lr = max(min_lr, config["init_lr"] * math.exp(math.log(
             config["decay_factor"]) / iter_per_epoch \
             / config["decay_every_epoch"])**iter)
     return decay_lr
