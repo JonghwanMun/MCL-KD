@@ -70,7 +70,7 @@ def get_filename_from_path(file_path, delimiter="/"):
     return filename.split(".")[0]
 
 """ helper functions for training model """
-def adjust_lr(iter, iter_per_epoch, config):
+def adjust_lr(iter, iter_per_epoch, config, min_lr=0.0001):
     """ Exponentially decaying learning rate
     Args:
         iter: current iteration
@@ -82,8 +82,8 @@ def adjust_lr(iter, iter_per_epoch, config):
     if config["decay_every_epoch"] == -1:
         decay_lr = config["init_lr"]
     else:
-        decay_lr = config["init_lr"] * math.exp(math.log(
+        decay_lr = min(min_lr, config["init_lr"] * math.exp(math.log(
             config["decay_factor"]) / iter_per_epoch \
-            / config["decay_every_epoch"])**iter
+            / config["decay_every_epoch"])**iter)
     return decay_lr
 
