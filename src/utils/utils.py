@@ -70,7 +70,7 @@ def get_filename_from_path(file_path, delimiter="/"):
     return filename.split(".")[0]
 
 """ helper functions for training model """
-def adjust_lr(iter, iter_per_epoch, config, min_lr=0.0001):
+def adjust_lr(iter, iter_per_epoch, config, min_lr=0.0002):
     """ Exponentially decaying learning rate
     Args:
         iter: current iteration

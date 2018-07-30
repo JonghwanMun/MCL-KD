@@ -85,6 +85,7 @@ def train(config):
     ii = 0
     tm = timer.Timer() # tm: timer
     iter_per_epoch = dsets["train"].get_iter_per_epoch()
+    min_lr = config["optimize"].get("min_lr", 0.0002)
     for epoch in range(start_epoch, config["optimize"]["num_epoch"]):
         net.train_mode() # set network as train mode
         net.reset_status() # initialize status
@@ -102,7 +103,7 @@ def train(config):
             # Note that the 1st and 2nd item of outputs from forward() should be
             # loss and logits. The others would change depending on the network
             tm.reset()
-            lr = utils.adjust_lr(ii+1, iter_per_epoch, config["optimize"])
+            lr = utils.adjust_lr(ii+1, iter_per_epoch, config["optimize"], min_lr)
             outputs = net.forward_update(batch, lr)
             run_duration = tm.get_duration()
 
