@@ -243,7 +243,8 @@ class Ensemble(VirtualVQANetwork):
             data: list [imgs, qst_labels, qst_lenghts, answer_labels, img_path]
         """
         # save predictions
-        self.save_predictions(prefix, mode)
+        if mode != "train":
+            self.save_predictions(prefix, mode)
         #if self.config["model"]["version"] != "IE":
             #self.save_assignments(prefix, mode)
             #self.visualize_assignments(prefix=prefix, mode=mode)
@@ -473,6 +474,7 @@ class Ensemble(VirtualVQANetwork):
         """
         super(Ensemble, self).save_checkpoint(cid)
 
+        """
         if self.config["model"]["save_all_net"]:
             for m in range(self.num_models):
                 self.net_list[m].save_checkpoint(cid, "M{}".format(m))
@@ -492,6 +494,7 @@ class Ensemble(VirtualVQANetwork):
                            ckpt_path.format(cid))
                 self.logger["train"].info("Assignment model is saved in {}".format(
                         ckpt_path.format(cid)))
+        """
 
     @classmethod
     def model_specific_config_update(cls, config):
@@ -577,7 +580,7 @@ class SAN(VirtualVQANetwork):
         # save predictions
         self.save_predictions(prefix, mode)
 
-        if mode == "train":
+        if False and mode == "train":
             # maintain sample data
             self._set_sample_data(data)
 
@@ -721,7 +724,7 @@ class SAAA(VirtualVQANetwork):
         # save predictions
         self.save_predictions(prefix, mode)
 
-        if mode == "train":
+        if False and mode == "train":
             # maintain sample data
             self._set_sample_data(data)
 
@@ -927,7 +930,7 @@ class SharedSAAA(VirtualVQANetwork):
         # save predictions
         self.save_predictions(prefix, mode)
 
-        if mode == "train":
+        if False and mode == "train":
             # maintain sample data
             self._set_sample_data(data)
 
