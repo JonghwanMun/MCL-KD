@@ -613,7 +613,6 @@ class StackedAttention(nn.Module):
                 # compute context vectors (weighted sum)
                 ctx_stack = img_feat * att_weights_stack.expand_as(img_feat) # [B, img_dim, h, w]
                 ctx_stack = ctx_stack.sum(2).sum(2)
-                #F.avg_pool2d(ctx_stack, H) # [B, img_dim, 1, 1]
 
                 # compute query vector
                 query_feat = query_feat + ctx_stack.squeeze()
