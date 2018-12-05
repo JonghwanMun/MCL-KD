@@ -38,9 +38,65 @@ class VirtualVQANetwork(VirtualNetwork):
         if verbose:
             self.logger["train"].info(json.dumps(config, indent=2))
 
-    def _set_sample_data(self, data):
-        if self.sample_data == None:
-            self.sample_data = copy.deepcopy(data)
+    def forward_update(self, batch, lr):
+        """ Forward and update the network at the same time
+        Args:
+            batch: list of two components [inputs for network, image information]
+                - inputs for network: should be tensors
+            lr: learning rate
+        """
+
+        # convert data (tensors) as Variables
+        if self.is_main_net:
+            self.cur_qids = batch[1]
+            data = self.tensor2variable(batch)
+            self.qsts = net_utils.get_data(data[1])
+
+        # Note that return value is a list of at least two items
+        # where the 1st and 2nd items should be loss and inputs for criterion
+        # (e.g. logits), and remaining items would be intermediate values of network
+        #  that you want to show or check
+        outputs = self.forward(data)
+        loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
+        self.update(loss, lr)
+        return [loss, *outputs]
+
+    def evaluate(self, batch):
+        """ Compute loss and network's output at once
+        Args:
+            batch: list of two components [inputs for network, image information]
+                - inputs for network: should be tensors
+        """
+
+        # convert data (tensors) as Variables
+        if self.is_main_net:
+            self.cur_qids = batch[1]
+            data = self.tensor2variable(batch)
+            self.qsts = net_utils.get_data(data[1])
+
+        # Note that return value is a list of at least two items
+        # where the 1st and 2nd items should be loss and inputs for criterion layer
+        # (e.g. logits), and remaining items would be intermediate values of network
+        # that you want to show or check
+        outputs = self.forward(data)
+        loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
+        return [loss, *outputs]
+
+    def predict(self, batch):
+        """ Compute only network's output
+        Args:
+            batch: list of two components [inputs for network, image information]
+                - inputs for network: should be tensors
+        """
+
+        # convert data (tensors) as Variables
+        if self.is_main_net:
+            self.cur_qids = batch[1]
+            data = self.tensor2variable(batch)
+            self.qsts = net_utils.get_data(data[1])
+
+        outputs = self.forward(data)
+        return [*outputs]
 
     def reset_status(self, init_reset=False):
         """ Reset (initialize) metric scores or losses (status).
@@ -49,6 +105,7 @@ class VirtualVQANetwork(VirtualNetwork):
             self.status = OrderedDict()
             self.status["loss"] = 0
             self.status["top1-avg"] = 0
+            self.status["oracle"] = 0
         else:
             for k in self.status.keys():
                 self.status[k] = 0
@@ -86,39 +143,6 @@ class VirtualVQANetwork(VirtualNetwork):
                              if self.use_gpu else Variable(tensors[-1]))
 
         return variables
-
-    """ methods for checkpoint """
-    def load_checkpoint(self, ckpt_path):
-        """ Load checkpoint of the network.
-        Args:
-            ckpt_path: checkpoint file path
-        """
-        model_state_dict = torch.load(ckpt_path)
-        for m in model_state_dict.keys():
-            if m in self.model_list:
-                self[m].load_state_dict(model_state_dict[m])
-            else:
-                self.logger["train"].info("{} is not in {}".format(
-                        m, "|".join(self.model_list)))
-
-        self.logger["train"].info("[{}] are initialized from checkpoint ({})".format(
-                "|".join(model_state_dict.keys()), ckpt_path))
-
-    def save_checkpoint(self, cid, modelname=None):
-        """ Save checkpoint of the network.
-        Args:
-            cid: id of checkpoint; e.g. epoch
-        """
-        if modelname == None:
-            modelname = "checkpoint"
-        ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
-                "checkpoints", "{}_epoch_{:03d}.pkl")
-        ckpt_path = ckpt_path.format(modelname, cid)
-        model_state_dict = OrderedDict()
-        for m in self.model_list:
-            model_state_dict[m] = self[m].state_dict()
-        torch.save(model_state_dict, ckpt_path)
-        self.logger["train"].info("Checkpoint is saved in {}".format(ckpt_path))
 
     def attach_assignments(self, gts):
         """ Attach assignments to save later and sort assignments
@@ -232,13 +256,6 @@ class VirtualVQANetwork(VirtualNetwork):
             self.origin_train_qst_ids = dataset.get_qst_ids()
             self.origin_test_qst_ids = dataset.get_qst_ids()
 
-        if (self.fetching_answer_option == "all_answers") \
-                and (self.classname not in ["ENSEMBLE", "ASSIGNMENT"]):
-            loss_reduce = utils.get_value_from_dict(
-                self.config["model"], "loss_reduce", True)
-            self.criterion = building_blocks.MultipleCriterion(
-                nn.CrossEntropyLoss(), loss_reduce)
-
     """ methods for confusion matrix """
     def visualize_confusion_matrix(self, epoch, prefix="train"):
         confusion_matrix_list = []
@@ -315,33 +332,6 @@ class VirtualVQANetwork(VirtualNetwork):
         self.counters["top1-avg"].add(num_correct, B)
         self.top1_gt = utils.label2string(self.itoa, gts[0])
 
-        """
-        if self.classname == "ENSEMBLE":
-            # compute probabilities and average them
-            B = logits[0].size(0)
-            self.probs = torch.stack(self.prob_list, 0) # [m, B, num_answers]
-            # compute accuracy using max-pooling
-            max_probs, _ = torch.max(self.probs, dim=0)
-            v, idx = net_utils.get_data(max_probs).max(dim=1)
-            num_correct = torch.sum(torch.eq(idx, gts))
-            self.status["top1-max"] = num_correct / B
-            self.counters["top1-max"].add(num_correct, B)
-            # maintain average probability as ensembled probability
-            self.probs = torch.mean(self.probs, dim=0) # [B, num_answers]
-
-        # count the number of correct predictions and save them for each model
-        if self.classname == "ENSEMBLE" \
-                and self.config["model"]["verbose_all"]:
-            assert type(logits) == type(list()),\
-                "To verbose all, you should perform ensemble"
-            for m in range(self.num_models):
-                val, idx = self.prob_list[m].data.cpu().max(dim=1)
-                num_correct = torch.sum(torch.eq(idx, gts))
-                model_name = "M{}".format(m)
-                self.status[model_name] = num_correct / B
-                self.counters[model_name].add(num_correct, B)
-        """
-
     def get_oracle_mask(self, logit_list, gts):
         """ Compute Oracle Accuracy
         Args:
@@ -393,7 +383,6 @@ class VirtualVQANetwork(VirtualNetwork):
             "logits should be list() for computing oracle accuracy"
 
         B = logit_list[0].size(0)
-        at = list(range(1, self.num_models+1))
         # compute oracle accuracy
         if self.prob_list == None:
             self.prob_list = [F.softmax(logit, dim=1) for logit in logit_list]

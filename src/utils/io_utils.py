@@ -48,38 +48,6 @@ def write_yaml(file_path, yaml_data, verbose=True):
     if verbose:
         print("Write yaml file in {}".format(file_path))
 
-""" Text file helpers """
-def append_text_to_file(file_path, append):
-    """ Append text to the file located in file_path.
-    Args:
-        file_path: str, file path
-        append: str, text to append
-    Return: None
-    """
-    with open(file_path, "a") as f:
-        if append[-1] == "\n":
-            append = append[:-1]
-        f.write(append + "\n")
-
-def load_lines_from(file_path):
-    lines = []
-    f = open(file_path, "r")
-    while True:
-        line = f.readline()
-        if not line: break
-        lines.append(line.strip().strip("\n"))
-    f.close()
-    return lines
-
-def load_lines_as_dict(file_path):
-    dic = defaultdict(lambda: False)
-    f = open(file_path, "r")
-    while True:
-        line = f.readline()
-        if not line: break
-        dic[line.strip().strip("\n")] = True
-    f.close()
-    return dic
 
 """ JSON helpers """
 def load_json(file_path, verbose=True):
@@ -92,6 +60,7 @@ def write_json(file_path, file_data, verbose=True):
         json.dump(file_data, outfile)
     if verbose:
         print("Write json file in {}".format(file_path))
+
 
 """ HDF5 helpers """
 def open_hdf5(file_path, mode="r", verbose=True):

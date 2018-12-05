@@ -26,18 +26,8 @@ def get_model(base_model_type):
         M = getattr(building_networks, "SimpleMLP")
     elif base_model_type in ["saaa", "SAAA"]:
         M = getattr(building_networks, "SAAA")
-    elif base_model_type in ["sharedsaaa", "SharedSAAA"]:
-        M = getattr(building_networks, "SharedSAAA")
     elif base_model_type in ["ensemble", "ENSEMBLE"]:
         M = getattr(building_networks, "Ensemble")
-    elif base_model_type in ["infer", "INFER"]:
-        M = getattr(building_networks, "EnsembleInference")
-    elif base_model_type in ["onlyqst", "ONLYQST"]:
-        M = getattr(building_networks, "OnlyQuestion")
-    elif base_model_type in ["mutan", "MUTAN"]:
-        M = getattr(building_networks, "MutanWrapper")
-    elif base_model_type in ["assignment", "ASSIGNMENT"]:
-        M = getattr(building_networks, "AssignmentNetwork")
     else:
         raise NotImplementedError("Not supported model type ({})".format(base_model_type))
     return M

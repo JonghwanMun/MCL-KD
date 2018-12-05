@@ -1,5 +1,6 @@
 import os
 import pdb
+import copy
 import logging
 import numpy as np
 from collections import OrderedDict
@@ -58,14 +59,6 @@ class VirtualNetwork(nn.Module):
         self.status["loss"] = net_utils.get_data(self.loss)[0]
         if count_loss:
             self.counters["loss"].add(self.status["loss"], 1)
-        """
-        TODO: consider using dictionary of multiple criterions for multiple losses
-        for crit_name,crit in self.criterions.items():
-            self.loss[crit_name] = crit(criterion_inp, gt)
-            self.status[crit_name] = net_utils.get_data(self.loss[crit_name])[0]
-            if count_loss:
-                self.counters[crit_name].add(self.status[crit_name], 1)
-        """
         return self.loss
 
     def update(self, loss, lr):
@@ -97,27 +90,15 @@ class VirtualNetwork(nn.Module):
         """
 
         # convert data (tensors) as Variables
-        if self.is_main_net:
-            self.cur_qids = batch[1]
-            data = self.tensor2variable(batch)
-            self.qsts = net_utils.get_data(data[1])
+        data = self.tensor2variable(batch)
 
         # Note that return value is a list of at least two items
-        # where the 1st and 2nd items should be loss and inputs for criterion layer
+        # where the 1st and 2nd items should be loss and inputs for criterion
         # (e.g. logits), and remaining items would be intermediate values of network
-        # that you want to show or check
-        #self.tm.reset()
+        #  that you want to show or check
         outputs = self.forward(data)
-        #forward_duration = self.tm.get_duration()
-        #self.tm.reset()
         loss = self.loss_fn(outputs[0], data[-1], count_loss=True)
-        #loss_duration = self.tm.get_duration()
-        #self.tm.reset()
         self.update(loss, lr)
-        #update_duration = self.tm.get_duration()
-        #txt = "forward {:.4f}s | loss {:.4f}s | update {:.4f}s"
-        #print(txt.format(
-        #    forward_duration, loss_duration, update_duration), end="\r")
         return [loss, *outputs]
 
     def evaluate(self, batch):
@@ -128,10 +109,7 @@ class VirtualNetwork(nn.Module):
         """
 
         # convert data (tensors) as Variables
-        if self.is_main_net:
-            self.cur_qids = batch[1]
-            data = self.tensor2variable(batch)
-            self.qsts = net_utils.get_data(data[1])
+        data = self.tensor2variable(batch)
 
         # Note that return value is a list of at least two items
         # where the 1st and 2nd items should be loss and inputs for criterion layer
@@ -149,10 +127,7 @@ class VirtualNetwork(nn.Module):
         """
 
         # convert data (tensors) as Variables
-        if self.is_main_net:
-            self.cur_qids = batch[1]
-            data = self.tensor2variable(batch)
-            self.qsts = net_utils.get_data(data[1])
+        data = self.tensor2variable(batch)
 
         outputs = self.forward(data)
         return [*outputs]
@@ -172,7 +147,7 @@ class VirtualNetwork(nn.Module):
             ckpt_path: checkpoint file path
         """
         self.logger["train"].info("Checkpoint is loaded from {}".format(ckpt_path))
-        model_state_dict = torch.load(ckpt_path)
+        model_state_dict = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
         for m in model_state_dict.keys():
             if m in self.model_list:
                 self[m].load_state_dict(model_state_dict[m])
@@ -183,17 +158,19 @@ class VirtualNetwork(nn.Module):
         self.logger["train"].info("[{}] are initialized from checkpoint".format(
                 " | ".join(model_state_dict.keys())))
 
-    def save_checkpoint(self, ckpt_path):
+    def save_checkpoint(self, cid):
         """ Save checkpoint of the network.
         Args:
-            ckpt_path: checkpoint file path
+            cid: id of checkpoint; e.g. epoch
         """
-        self.logger["train"].info("Checkpoint [{}] is saved in {}".format(
-            " | ".join(model_state_dict.keys()), ckpt_path))
-        model_state_dict = {}
+        ckpt_path = os.path.join(self.config["misc"]["result_dir"], \
+                "checkpoints", "epoch_{:03d}.pkl")
+        ckpt_path = ckpt_path.format(cid)
+        model_state_dict = OrderedDict()
         for m in self.model_list:
             model_state_dict[m] = self[m].state_dict()
         torch.save(model_state_dict, ckpt_path)
+        self.logger["train"].info("Checkpoint is saved in {}".format(ckpt_path))
 
     def _get_loggers(self):
         """ Create logging variables.
@@ -202,6 +179,10 @@ class VirtualNetwork(nn.Module):
         self.logger["train"] = io_utils.get_logger("Train")
         self.logger["epoch"] = io_utils.get_logger("Epoch")
         self.logger["eval"] = io_utils.get_logger("Evaluate")
+
+    def _set_sample_data(self, data):
+        if self.sample_data == None:
+            self.sample_data = copy.deepcopy(data)
 
     """ method for status (metrics) """
     def reset_status(self, init_reset=False):

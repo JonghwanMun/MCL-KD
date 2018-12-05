@@ -51,21 +51,6 @@ def get_conv2d(in_dim, out_dim, k_size, stride=1, padding=0, bias=True,
         layers.append(getattr(nn, nonlinear)())
     return nn.Sequential(*layers)
 
-def get_linear(in_dim, out_dim, bias=True, dropout=0.0, nonlinear="ReLU", use_batchnorm=False):
-    layers = []
-    if dropout > 0:
-        layers.append(nn.Dropout(p=dropout))
-    if use_batchnorm:
-        layers.append(nn.BatchNorm1d(in_dim))
-    layers.append(nn.Linear(in_features=in_dim, out_features=out_dim, bias=bias))
-    if use_batchnorm:
-        layers.append(nn.BatchNorm1d(out_dim))
-    if dropout > 0:
-        layers.append(nn.Dropout(p=dropout))
-    if nonlinear != "None":
-        layers.append(getattr(nn, nonlinear)())
-    return nn.Sequential(*layers)
-
 def get_mlp(in_dim, out_dim, hidden_dims, bias=True, dropout=0.0, nonlinear="ReLU", use_batchnorm=False):
     layers = []
     if dropout > 0:
@@ -276,90 +261,6 @@ class Embedding2D(nn.Module):
         out = self.embedding_2d(inp)
         return out
 
-class MultimodalFusion(nn.Module):
-    def __init__(self, config, name=""):
-        super(MultimodalFusion, self).__init__() # Must call super __init__()
-        if name != "":
-            name = name + "_"
-
-        # get model options
-        self.method = utils.get_value_from_dict(config, name+"fusion_method", "hadamard")
-
-        # build layers
-        if self.method == "hadamard":
-            # get model options
-            inp1_dim = utils.get_value_from_dict(config, name+"fusion_inp1_dim", 256)
-            inp1_dropout_prob = utils.get_value_from_dict(
-                config, name+"fusion_inp1_dropout_prob", 0)
-            inp1_emb_nonlinear_fn = utils.get_value_from_dict(
-                config, name+"fusion_inp1_nonlinear_fn", "Tanh")
-            inp2_dim = utils.get_value_from_dict(config, name+"fusion_inp2_dim", 256)
-            inp2_dropout_prob = utils.get_value_from_dict(
-                config, name+"fusion_inp2_dropout_prob", 0)
-            inp2_emb_nonlinear_fn = utils.get_value_from_dict(
-                config, name+"fusion_inp2_nonlinear_fn", "Tanh")
-            multimodal_dim = utils.get_value_from_dict(config, name+"fusion_dim", 256)
-
-            # build layers for hadamard
-            self.inp1_emb_layer = get_linear(
-                    inp1_dim, multimodal_dim, dropout=inp1_dropout_prob,
-                    nonlinear=inp1_emb_nonlinear_fn)
-            self.inp2_emb_layer = get_conv2d(
-                    inp2_dim, multimodal_dim, k_size=1, bias=False,
-                    dropout=inp2_dropout_prob, nonlinear=inp2_emb_nonlinear_fn)
-            self.multimodal_emb_layer = get_linear(
-                    multimodal_dim, multimodal_dim, nonlinear="None")
-
-
-    def forward(self, data):
-        """ Fuse multimodal features (e.g. hadamard product or element-wise multiplication)
-            Currently inp1 and inp2 should be questions (1D) and images (1D or 2D)
-        Args:
-            inp1: [B, inp1_dim]; question
-            inp2: [B, inp2_dim, h, w] or [B, inp2]; image
-        Returns:
-            multimodal_feat : [B, multimodal_dim]
-        """
-        inp1 = data[0]
-        inp2 = data[1]
-        if self.method == "hadamard":
-            inp1_emb_feat = self.inp1_emb_layer(inp1)
-            inp2_emb_feat = self.inp2_emb_layer(inp2).mean(2).mean(2) # applying avg-pooling
-            multimodal_feat = inp1_emb_feat * inp2_emb_feat
-            multimodal_feat = self.multimodal_emb_layer(multimodal_feat)
-        elif self.method == "elem-mul":
-            if inp2.dim() == 4:
-                inp2 = inp2.mean(2).mean(2) # applying avg-pooling
-            multimodal_feat = inp1 * inp2
-
-        return multimodal_feat
-
-
-class AssignmentModel(nn.Module):
-    def __init__(self, config):
-        super(AssignmentModel, self).__init__() # Must call super __init__()
-        name = "assignment"
-
-        # build layers
-        #self.img_emb_layer = Embedding2D(config, name="assignment_img")
-        self.qst_emb_layer = QuestionEmbedding(config)
-        layers = []
-        layers.append(MultimodalFusion(config, name))
-        layers.append(MLP(config, name)) # TODO: setting num_models
-        self.assign_layer = nn.Sequential(*layers)
-
-    def forward(self, data):
-        # fetch data
-        img_feats = data[0]
-        qst_labels = data[1]
-        qst_len = data[2]
-
-        img_feats = img_feats \
-                / (img_feats.norm(p=2, dim=1, keepdim=True).expand_as(data[0]))
-        qst_feats = self.qst_emb_layer(qst_labels, qst_len)
-        assignment_logits = self.assign_layer([qst_feats, img_feats])
-        return assignment_logits
-
 
 class QuestionEmbedding(nn.Module):
     def __init__(self, config, name=""):
@@ -461,9 +362,9 @@ class QuestionEmbedding(nn.Module):
             return init_h if self.rnn_type == "GRU" else (init_h, init_c)
 
 
-class RevisedStackedAttention(nn.Module):
+class StackedAttention(nn.Module):
     def __init__(self, config):
-        super(RevisedStackedAttention, self).__init__() # Must call super __init__()
+        super(StackedAttention, self).__init__() # Must call super __init__()
 
         # get SAN configurations
         self.num_stacks = utils.get_value_from_dict(config, "num_stacks", 2)
@@ -521,117 +422,7 @@ class RevisedStackedAttention(nn.Module):
                     self.att_weights[0, ns].min().data[0]))
 
 
-class StackedAttention(nn.Module):
-    def __init__(self, config):
-        super(StackedAttention, self).__init__() # Must call super __init__()
-
-        # get SAN configurations
-        self.num_stacks = utils.get_value_from_dict(config, "num_stacks", 2)
-        qst_feat_dim = utils.get_value_from_dict(config, "qst_emb_dim", 256)
-        img_feat_dim = utils.get_value_from_dict(config, "img_emb_dim", 256)
-        self.att_emb_dim = utils.get_value_from_dict(config, "att_emb_dim", 512)
-        att_nonlinear = utils.get_value_from_dict(config, "att_nonlinear_fn", "None")
-
-        assert self.num_stacks > 0, "# of stacks {} < 1.".format(self.num_stacks)
-        if self.num_stacks > 1:
-            assert qst_feat_dim == img_feat_dim
-
-        # layers for 1st attention
-        self.query_encoder_1 = get_linear(qst_feat_dim, self.att_emb_dim,
-            bias=False, dropout=0, nonlinear=att_nonlinear)
-        self.img_encoder_1 = get_conv2d(
-            img_feat_dim, self.att_emb_dim, 1, 1, dropout=0, nonlinear=att_nonlinear)
-        self.att_encoder_1 = get_conv2d(
-            self.att_emb_dim, 1, 1, 1, dropout=0, nonlinear="None")
-        self.att_softmax_1 = nn.Softmax(dim=2)
-
-        # layers for after 2nd attention
-        if self.num_stacks > 1:
-            self.query_encoder_stack = nn.ModuleList()
-            self.query_encoder_stack = nn.ModuleList()
-            self.img_encoder_stack = nn.ModuleList()
-            self.att_encoder_stack = nn.ModuleList()
-            self.att_softmax_stack = nn.ModuleList()
-            #self.avg2d_stack = nn.ModuleList()
-            for si in range(self.num_stacks-1):
-                self.query_encoder_stack.append( get_linear(
-                    qst_feat_dim, self.att_emb_dim,
-                    dropout=0, nonlinear=att_nonlinear)
-                )
-                self.img_encoder_stack.append( get_conv2d(
-                    img_feat_dim, self.att_emb_dim, 1, 1, bias=False,
-                    dropout=0, nonlinear=att_nonlinear)
-                )
-                self.att_encoder_stack.append( get_conv2d(
-                    self.att_emb_dim, 1, 1, 1, dropout=0, nonlinear="None")
-                )
-                self.att_softmax_stack.append(nn.Softmax(dim=2))
-
-    def forward(self, qst_feat, img_feat):
-        """ Compute context vector given qst feature and visual features
-        Args:
-            qst_feat: [B, qst_feat_dim]
-            img_feat: [B, img_feat_dim, h, w]
-        Returns:
-            ctx_feat: [B, ctx_feat_dim]
-            att_weights_list: list of attention weithgs [(B, h, w), ..., (B, h, w)]
-        """
-
-        self.att_weights_list = []
-        B, K, H, W = img_feat.size()
-
-        # compute 1st attention weights
-        query_emb_1 = self.query_encoder_1(qst_feat) # [B, att_dim]
-        img_emb_1 = self.img_encoder_1(img_feat) # [B, att_dim, h, w]
-        att_emb_1 = self.att_encoder_1( \
-                F.tanh(img_emb_1 + query_emb_1.view(
-                    B, self.att_emb_dim, 1, 1).expand_as(img_emb_1))) # [B,1,h,w]
-        # [B,1,h,w] -> [B,1,h*w] -> [B,1,h,w]
-        att_weights_1 = self.att_softmax_1(att_emb_1.view(B, 1, H*W)).view(B, 1, H, W)
-
-        # compute 1st context vectors (weighted sum)
-        ctx_1 = img_feat * att_weights_1.expand_as(img_feat) # [B, img_dim, h, w]
-        ctx_1 = ctx_1.sum(2).sum(2)
-        #F.avg_pool2d(ctx_1, H) # [B, img_feat_dim, 1, 1]
-
-        # query vector where initial query vector is a question feature
-        query_feat = qst_feat + ctx_1.squeeze() # [B, img_feat_dim]
-        # append attention weights
-        self.att_weights_list.append(att_weights_1.squeeze().clone())
-
-        # compute after 2nd attention weights (after stack 2)
-        if self.num_stacks > 1:
-            for si in range(self.num_stacks-1):
-                # compute attention weights
-                query_emb_stack = self.query_encoder_stack[si](query_feat) # [B, att_dim]
-                img_emb_stack = self.img_encoder_stack[si](img_feat) # [B, att_dim, h, w]
-                att_emb_stack = self.att_encoder_stack[si](F.tanh(img_emb_stack \
-                        + query_emb_stack.view(B, self.att_emb_dim, 1, 1).expand_as(img_emb_stack)))
-                att_weights_stack = self.att_softmax_stack[si](
-                    att_emb_stack.view(B, 1, H*W)).view(B, 1, H, W)
-
-                # compute context vectors (weighted sum)
-                ctx_stack = img_feat * att_weights_stack.expand_as(img_feat) # [B, img_dim, h, w]
-                ctx_stack = ctx_stack.sum(2).sum(2)
-                #F.avg_pool2d(ctx_stack, H) # [B, img_dim, 1, 1]
-
-                # compute query vector
-                query_feat = query_feat + ctx_stack.squeeze()
-                # append attention weights
-                self.att_weights_list.append(att_weights_stack.squeeze().clone())
-
-        return query_feat, self.att_weights_list
-
-    def print_status(self, logger, prefix=""):
-        for ns in range(self.num_stacks):
-            logger.info(
-                "{}-ATT-{}-stack max={:.6f} | min={:.6f}".format(
-                    prefix, (ns+1), self.att_weights_list[ns][0].max().data[0],
-                    self.att_weights_list[ns][0].min().data[0]))
-
-"""
-Layers for loss
-"""
+""" Layers for loss """
 class EnsembleLoss(nn.Module):
     def __init__(self, config):
         super(EnsembleLoss, self).__init__() # Must call super __init__()
@@ -641,7 +432,7 @@ class EnsembleLoss(nn.Module):
         # common options
         self.version = utils.get_value_from_dict(config, "version", "KD-MCL")
         self.use_gpu = utils.get_value_from_dict(config, "use_gpu", True)
-        self.m = utils.get_value_from_dict(config, "num_models", 3)
+        self.m = utils.get_value_from_dict(config, "num_models", 5)
         self.num_labels = utils.get_value_from_dict(config, "num_labels", 28)
         self.print_every = 20
         self.log_every = 500
@@ -664,14 +455,6 @@ class EnsembleLoss(nn.Module):
         if self.apply_uniform_sampling_k:
             self.sampling_k_every = \
                 utils.get_value_from_dict(config, "sampling_k_every", 1000)
-
-        # options for KD-MCL
-        self.use_KD_loss_with_ensemble = utils.get_value_from_dict(
-                config, "use_KD_loss_with_ensemble", False)
-        self.assign_using_accuracy = utils.get_value_from_dict(
-                config, "assign_using_accuracy", False)
-        self.use_ensemble_loss = utils.get_value_from_dict(
-                config, "use_ensemble_loss", False)
 
         # options for margin-MCL
         self.margin_threshold = utils.get_value_from_dict(
@@ -705,15 +488,7 @@ class EnsembleLoss(nn.Module):
         """
         # increment the iteration number
         self.iteration += 1
-        if self.apply_uniform_sampling_k and (self.iteration % self.sampling_k_every == 0):
-            txt = "=====> [Iter {}] K is changed from {} to {}".format(
-                    self.iteration, self.k, "{}")
-            self.k = random.randint(1,self.m)
-            self.logger.info(txt.format(self.k))
 
-        # for all answers, we just use most frequent answers as ground-truth
-        if type(labels) == type(list()):
-            labels = labels[0]
         B = labels.size(0)
         logit_list = inp[0]
         task_loss_list = inp[1]
@@ -723,8 +498,6 @@ class EnsembleLoss(nn.Module):
 
         log_txt = ""
         self.assignments = None
-        if self.use_assignment_model and self.version != "IE":
-            assignment_logits = inp[2]
 
         if self.version == "IE":
             # naive independent ensemble learning
@@ -739,12 +512,14 @@ class EnsembleLoss(nn.Module):
             # End of IE
 
         elif self.version == "sMCL":
-            # stochastic MCL (sMCL) [Stefan Lee et. al., 2016] (https://arxiv.org/abs/1606.07839)
             if self.iteration % self.print_every == 0:
                 txt = "sMCL "
                 print(txt, end="")
             if (self.iteration % self.log_every ) == 0:
                 log_txt += txt
+
+            # compute oracle loss
+            # stochastic MCL (sMCL) [Stefan Lee et. al., 2016] (https://arxiv.org/abs/1606.07839)
             min_val, min_idx = task_loss_tensor.t().topk(self.k, dim=1, largest=False)
             self.assignments = net_utils.get_data(min_idx) # [B,k]
             min_idx = min_idx.t()
@@ -752,54 +527,9 @@ class EnsembleLoss(nn.Module):
             # End of sMCL
 
         else:
-            if self.version == "margin-MCL":
-                """ similar to CMCL, but just letting the differnce over
-                    the probability at GT higher than margin instead of
-                    producing uniform distribution
-                """
-
-                # compute margins
-                if self.use_logit:
-                    logits = logit_list
-                else:
-                    logits = [(F.softmax(logit, dim=1) + 1e-5).log_() \
-                              for logit in logit_list]
-
-                # list of list; m * [m]
-                nonspecialist_loss_list = [net_utils.compute_margin_loss(
-                        logits, labels, mi, self.margin_threshold, \
-                        self.beta, reduce=False) \
-                        for mi in range(self.m)]
-
-                # for printing status
-                txt = "margin-MCL CE {} | margin {} | ORACLE {} "
-
-            elif self.version == "Attention-Transfer":
-
-                # compute attention transfer loss
-                at_loss_list = []
-                student_groups = inp[-2] # m*[groups]; groups: l*[activations]
-                teacher_groups = inp[-1] # m*[groups]
-                at_loss_list = [
-                    net_utils.compute_attention_transfer_loss(s, t, self.att_transfer_beta) \
-                    for s,t in zip(student_groups, teacher_groups)
-                ]
-
-                # compute KLD with uniform distribution
-                prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
-                             for logit in logit_list] # m*[B,C]
-                entropy_list= [self.beta*(-prob.log().mean(dim=1)).add(-np.log(self.num_labels))
-                                   for prob in prob_list] # m*[B]
-
-                nonspecialist_loss_list = [at_loss_list[i]+entropy_list[i] \
-                                           for i in range(self.m)]
-
-                txt = "AT CE {} | NON {} | ORACLE {} "
-                txt += ("AT {} ".format("/".join("{:6.3f}".format(
-                        atl[0].data[0]) for atl in at_loss_list)))
-
-            elif self.version == "KD-MCL":
-                # compute KL divergence with teacher distribution for each model
+            if self.version == "KD-MCL":
+                # compute KL divergence between distributions of
+                # specialized model and its corresponding base model
                 nonspecialist_loss_list = self.compute_kld(logit_list, inp[-1])
                 nonspecialist_loss_list = [self.beta * nsl for nsl in nonspecialist_loss_list]
 
@@ -818,19 +548,9 @@ class EnsembleLoss(nn.Module):
                 txt = self.version + " CE {} | ENT {} | ORACLE {} "
             else:
                 raise NotImplementedError("Not supported version of ensemble loss (%s)" % self.version)
-
-            if type(nonspecialist_loss_list[0]) == type(list()):
-                nonspecialist_loss_list = [sum(nonspecialist_loss_list[i]) for i in range(self.m)]
             nonspecialist_loss_tensor = torch.stack(nonspecialist_loss_list, dim=0) # [m,B]
 
-            # print some information for checking that options are set correctly
-            if (self.iteration < 10):
-                self.logger.info("===> Setting assignment with only task loss ({})".format(
-                    self.assignment_with_only_task_loss))
-                self.logger.info("===> Setting use adaptive assignment ({})".format(
-                    self.use_adaptive_assignment))
-
-            """ Compute oracle loss and select the best assignment """
+            """ Compute oracle loss and select the best assignment vector """
             # compute oracle loss for all possible combinations given overlap k
             assign_idx, not_assign_idx = net_utils.get_combinations(self.m, self.k)
 
@@ -838,34 +558,15 @@ class EnsembleLoss(nn.Module):
             num_combinations = len(assign_idx)
             if self.assignment_with_only_task_loss:
                 real_oracle_loss_list = []
-            if self.version == "margin-MCL":
-                for nc in range(num_combinations):
-                    specialized = []
-                    non_specialized = []
-                    for aidx in assign_idx[nc]:
-                        specialized.append(task_loss_list[aidx])
-                        non_specialized.extend([nonspecialist_loss_list[aidx][nidx] \
-                                                for nidx in not_assign_idx[nc]])
+            for nc in range(num_combinations):
+                specialized = [task_loss_list[idx] for idx in assign_idx[nc]]
+                non_specialized = [nonspecialist_loss_list[idx] for idx in not_assign_idx[nc]]
 
-                    if self.assignment_with_only_task_loss:
-                        oracle_loss_list.append(sum(specialized))
-                        real_oracle_loss_list.append(sum(specialized) + sum(non_specialized))
-                    else:
-                        oracle_loss_list.append(sum(specialized) + sum(non_specialized))
-
-            else:
-                for nc in range(num_combinations):
-                    specialized = [task_loss_list[idx] for idx in assign_idx[nc]]
-                    non_specialized = [nonspecialist_loss_list[idx] for idx in not_assign_idx[nc]]
-
-                    if self.assignment_with_only_task_loss:
-                        oracle_loss_list.append(sum(specialized))
-                        real_oracle_loss_list.append(sum(specialized) + sum(non_specialized))
-                    else:
-                        oracle_loss_list.append(sum(specialized) + sum(non_specialized))
-
-            if self.assignment_with_only_task_loss:
-                real_oracle_loss_tensor = torch.stack(real_oracle_loss_list, dim=0).t() # [B,nc]
+                if self.assignment_with_only_task_loss:
+                    oracle_loss_list.append(sum(specialized))
+                    real_oracle_loss_list.append(sum(specialized) + sum(non_specialized))
+                else:
+                    oracle_loss_list.append(sum(specialized) + sum(non_specialized))
 
             # select best assignment
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [nc,B]
@@ -876,53 +577,6 @@ class EnsembleLoss(nn.Module):
                     assign_idx, net_utils.get_data(min_idx)) # [max_k,B]
             if self.use_gpu and torch.cuda.is_available():
                 min_idx = min_idx.cuda()
-
-            if self.use_adaptive_assignment:
-                cbn_idx = net_utils.get_data(min_idx) # [k,B]
-                new_assignment = -torch.ones((B, self.m))
-                new_assignment[:,:self.k] = cbn_idx.t()
-                assignment_mask = torch.zeros((B, self.m)).scatter_(1, cbn_idx.t(), 1)
-
-                # check whether top1-avg is correct or not
-                prob_list = [F.softmax(logit, dim=1).clamp(1e-10, 1.0)
-                             for logit in logit_list] # m*[B,C]
-                probs = torch.mean(torch.stack(prob_list, 0 ), dim=0) # [B, num_answers]
-                val, max_idx = probs.max(dim=1)
-                correct_mask = torch.eq(max_idx, labels)
-
-                if correct_mask.sum().data[0] != B:
-                    wrong_idx = net_utils.get_data((correct_mask==0).nonzero().squeeze())
-
-                    all_assign = torch.arange(self.m).view(1,-1).expand(B,-1)
-                    new_assignment[wrong_idx] = all_assign[wrong_idx]
-
-                    ones = torch.ones(B, self.m)
-                    assignment_mask[wrong_idx] = ones[wrong_idx]
-
-                new_assignment = new_assignment.t()
-                assignment_mask = assignment_mask.t()
-                """
-                for bi in range(B):
-                    ii = 0
-                    assigned_idx = idx[0,bi]
-                    gt_label_idx = labels[bi].data[0]
-                    assigned_gt_prob = prob_list[assigned_idx][bi,gt_label_idx]
-                    for mi in range(self.m):
-                        if assigned_idx == mi:
-                            continue
-                        else:
-                            non_assigned_gt_prob = prob_list[mi][bi, gt_label_idx]
-                            mask = prob_list[mi].gt(non_assigned_gt_prob)
-                            if (mask.sum().data[0] == 0) \
-                                    and (non_assigned_gt_prob.data[0] > \
-                                         assigned_gt_prob.data[0] * self.adaptive_threshold):
-                                ii += 1
-                                new_assignment[ii, bi] = mi
-                                assignment_mask[mi, bi] = 1
-                """
-                min_idx = Variable(new_assignment).long()
-                assignment_mask = Variable(assignment_mask).cuda() if self.use_gpu \
-                        else Variable(assignment_mask)
 
             self.assignments = net_utils.get_data(min_idx.t()) # [B,m]
 
@@ -971,20 +625,10 @@ class EnsembleLoss(nn.Module):
                 # end of CMCL v1
 
             else:
-                if not self.use_adaptive_assignment:
-                    if self.assignment_with_only_task_loss:
-                        min_val = real_oracle_loss_tensor.gather(1, raw_min_idx.view(B,1))
-                    total_loss = min_val.sum() / B
-                else:
-                    # TODO: current version do not support for margin-MCL
-                    assign_mask = assignment_mask.eq(1).float()
-                    not_assign_mask = assignment_mask.eq(0).float()
-                    total_loss = (assign_mask*task_loss_tensor).sum() \
-                        + (not_assign_mask*nonspecialist_loss_tensor).sum()
-                    total_loss = total_loss / B
+                total_loss = min_val.sum() / B
                 # End
 
-            if False and (self.iteration % self.print_every == 0):
+            if self.iteration % self.print_every == 0:
                 num_combinations = oracle_loss_tensor.size(0)
                 txt = txt.format( \
                     "/".join("{:.3f}".format(
@@ -999,32 +643,8 @@ class EnsembleLoss(nn.Module):
                 log_txt += txt
             # end of computig oracle loss with assignments
 
-        if self.use_ensemble_loss:
-            logits = torch.stack(logit_list, 0).mean(dim=0)
-            probs = F.softmax(logits, dim=1)
-            ensemble_loss = F.cross_entropy(probs, labels)
-            total_loss += ensemble_loss
-            if self.iteration % self.print_every == 0:
-                txt = "EL {:.3f} ".format(ensemble_loss.data[0])
-                print(txt, end="")
-            if (self.iteration % self.log_evry) == 0:
-                log_txt += txt
 
-        # learn to predict assignment using question features
-        if self.use_assignment_model and (self.version != "IE"):
-            assignment_gt = Variable(
-                self.assignments[:, 0].clone().long(),
-                requires_grad=False)
-            if self.use_gpu and torch.cuda.is_available():
-                assignment_gt = assignment_gt.cuda()
-
-            self.assignment_loss = self.assignment_criterion(
-                    assignment_logits, assignment_gt)
-            total_loss += self.assignment_loss
-        else:
-            self.assignment_loss = None
-
-        if False and self.version != "IE":
+        if self.version != "IE":
             max_k = min_idx.size()[0]
             assign_num = []
             for i in range(self.m):
@@ -1041,57 +661,11 @@ class EnsembleLoss(nn.Module):
 
     def compute_kld(self, logit_list, teacher_list):
         # compute KL divergence with teacher distribution for each model
-        if self.use_KD_loss_with_ensemble:
-            if self.iteration % self.print_every == 0:
-                print("Ens teacher logit ", end="")
-            # logit version
-            teacher_logit = sum(teacher_list) / self.m
-            nonspecialist_loss_list = [net_utils.compute_kl_div( \
-                student_logit, teacher_logit, self.tau) \
-                for student_logit in logit_list] # m*[B]
-            """
-            # prob version
-            teacher_prob = sum([F.softmax(tl, dim=1) for tl in teacher_list]) / self.m
-            nonspecialist_loss_list = [net_utils.compute_kl_div( \
-                student_logit, teacher_prob, self.tau, False) \
-                for student_logit in logit_list] # m*[B]
-            """
-        else:
-            nonspecialist_loss_list = [net_utils.compute_kl_div( \
-                student_logit, teacher_logit, self.tau) \
-                for student_logit, teacher_logit \
-                in zip(logit_list, teacher_list)] # m*[B]
+        nonspecialist_loss_list = [
+            net_utils.compute_kl_div(student_logit, teacher_logit, self.tau)
+            for student_logit, teacher_logit in zip(logit_list, teacher_list)
+        ] # m*[B]
         return nonspecialist_loss_list
-
-
-class AttentionTransferLoss(nn.Module):
-    def __init__(self, config):
-        super(AttentionTransferLoss, self).__init__() # Must call super __init__()
-        self.att_transfer_beta = utils.get_value_from_dict(config, "att_transfer_beta", 1000)
-
-    def forward(self, logits, gts):
-        # This method accepts ground-truth as second argument
-        # to be consistent with VirtualNetwork Class.
-        # Thus, we do not use gts to compute KL divergence loss.
-        student = logits[0]
-        teacher = logits[1]
-        assert len(student) == len(teacher), \
-            "[AttentionTransferLoss] The number of layers should be same for student and teacher"
-
-        at_loss_list = []
-        num_models = len(student)
-        for m in range(num_models):
-            for s,t in zip(student[m], teacher[m]):
-                at_loss_list.append(
-                    (self.get_attention(s)-self.get_attention(t)).pow(2).mean()
-                )
-
-        return sum(at_loss_list) * self.att_transfer_beta
-
-    def get_attention(self, logit):
-        # return l2_norm( \sum_c|logit_c|^p ) where p=2
-        B = logit.size(0)
-        return F.normalize(logit.pow(2).mean(1).view(B,-1)) # [B, h*w]
 
 
 class KLDLoss(nn.Module):
@@ -1114,89 +688,3 @@ class KLDLoss(nn.Module):
         teacher = logits[1]
         return net_utils.compute_kl_div(student, teacher,
                     self.tau, self.apply_softmax_on_teacher, self.reduce)
-
-
-class MultipleCriterion(nn.Module):
-    def __init__(self, criterion=nn.CrossEntropyLoss(), loss_reduce=True):
-        super(MultipleCriterion, self).__init__() # Must call super __init__()
-
-        self.criterion = criterion
-        self.criterion.reduce = False
-        self.loss_reduce = loss_reduce
-
-    def forward(self, inp, labels):
-        """
-        Args:
-            inp: logits; [B, C]
-            labels: list of [answers, all_answers, mask]
-                - answers: do not use this
-                - all_answers: all answers; [B, A]
-                - mask: mask of answers; [B, A]
-        """
-        all_labels = labels[1]
-        mask = labels[2]
-        _, C = inp.size()
-        B, A = all_labels.size()
-
-        flat_logit = inp.view(B,1,C).expand(B,A,C).contiguous().view(B*A,C)
-        flat_all_labels = all_labels.view(B*A)
-
-        loss = self.criterion(flat_logit, flat_all_labels)
-        loss = loss * mask.view(B*A)
-        loss = loss.view(B,A).mean(dim=1) # [B,]
-
-        if self.loss_reduce:
-            loss = loss.mean() # scalar
-
-        return loss
-
-class AssignmentCriterion(nn.Module):
-    def __init__(self, use_ensemble_loss=False):
-        super(AssignmentCriterion, self).__init__() # Must call super __init__()
-
-        self.assign_criterion = nn.BCEWithLogitsLoss()
-        self.use_ensemble_loss = use_ensemble_loss
-        if self.use_ensemble_loss:
-            self.ensemble_criterion = nn.NLLLoss()
-
-    def forward(self, inp, labels):
-        """
-        Args:
-            inp: two items 1)logits of assignment network; [B,C]
-                           2)logit lists of ensemble model; m*[B,C]
-            labels: list of [answers, all_answers, mask]
-                - answers: do not use this
-                - all_answers: all answers; [B, A]
-                - mask: mask of answers; [B, A]
-        """
-        assign_logits = inp[0]
-        ensemble_logits = inp[1]
-        if type(labels) == type(list()):
-            gts = labels[0]
-        else:
-            gts = labels
-        B = assign_logits.size(0)
-        num_models = len(ensemble_logits)
-
-        # obtain labels
-        correct_mask = []
-        ensemble_probs = [F.softmax(logit, dim=1) \
-                              for logit in ensemble_logits]
-        for m in range(num_models):
-            val, idx = ensemble_probs[m].max(dim=1)
-            mask = torch.eq(idx, gts)
-            correct_mask.append(mask.data) # m*[B]
-
-        correct_labels = torch.stack(correct_mask, 0).t() # [B,m]
-        self.correct_labels = Variable(correct_labels, requires_grad=False).float()
-        assign_loss = self.assign_criterion(assign_logits, self.correct_labels)
-
-        if self.use_ensemble_loss:
-            assign_weight = F.sigmoid(assign_logits)
-            weighted_ensemble_probs = [ensemble_probs[m]*assign_weight[:,m:m+1] \
-                                       for m in range(num_models)]
-            ensemble_loss = self.ensemble_criterion(
-                    F.log(sum(weighted_ensemble_probs)/num_models), gts)
-            assign_loss += ensemble_loss
-
-        return assign_loss

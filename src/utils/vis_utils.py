@@ -78,7 +78,7 @@ def add_image_to_figure(fig, gc, row, col, row_height, col_width, images,
             fig.colorbar(cax)
 
 def add_vector_to_figure(fig, gc, row, col, row_height, col_width, vectors,
-                         class_name=None, ymin=0, ymax=0.1, colortype=None):
+                         class_name=None, ymin=0, ymax=1.0, colortype=None):
     try:
         if colortype == "sequence":
             color = sns.color_palette("Set1", n_colors=23, desat=.4)
@@ -89,7 +89,7 @@ def add_vector_to_figure(fig, gc, row, col, row_height, col_width, vectors,
 
     for i, vector in enumerate(vectors):
         sub = fig.add_subplot(gc[row:row+row_height, col:col+col_width])
-        #sub.set_ylim([ymin, ymax])
+        sub.set_ylim([ymin, ymax])
         cax = sub.bar(np.arange(vector.shape[0]), vector, width=0.8, color=color)
         sub.axes.get_xaxis().set_visible(False)
         sub.tick_params(axis="y", which="major", labelsize=3)
@@ -97,7 +97,7 @@ def add_vector_to_figure(fig, gc, row, col, row_height, col_width, vectors,
             tick_marks = np.arange(len(class_name))
             sub.axes.get_xaxis().set_visible(True)
             plt.setp(sub, xticks=tick_marks, xticklabels=class_name)
-            plt.setp(sub.get_xticklabels(), fontsize=2, rotation=45)
+            plt.setp(sub.get_xticklabels(), fontsize=1, rotation=45)
 
 def add_question_row_subplot(fig, gc, question, row, col_width=-1):
     if col_width != -1:
@@ -131,6 +131,9 @@ def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row,
         add_text_to_figure(fig, gc, row, 2, 1, 2, \
                 ["Assignment: {}".format(" | ".join(str(answer_logit[1][i]+1) \
                 for i in range(answer_logit[1].size(0))))], rotation=0)
+
+        ii = 1
+        class_name_ = None
         for logit in answer_logit[0]:
             # compute probability of answers
             logit = logit.numpy() # tensor to numpy
@@ -141,10 +144,13 @@ def add_answer_row_subplot(fig, gc, answer_logit, gt, itoa, row,
             add_text_to_figure(fig, gc, row+1, 0, 1, 1, top5_predictions,
                                y_loc=0.5, colortype="sequence")
             if not is_vqa:
+                if ii == len(answer_logit[0]):
+                    class_name_ = class_name
                 add_vector_to_figure(fig, gc, row+1, 6, 1, 3,
-                                     [answer_prob], class_name=class_name)
+                                     [answer_prob], class_name=class_name_)
                 add_vector_to_figure(fig, gc, row+1, 10, 1, 3,
-                                     [logit], class_name=class_name)
+                                     [logit], class_name=class_name_)
+            ii += 1
             row += 1
     else:
         # compute probability of answers
@@ -212,8 +218,7 @@ def save_san_visualization(config, data, result, itow, itoa, prefix, figsize=(5,
         plt.close()
 
 def save_mcl_visualization(config, data, result, class_name, itow, itoa, \
-                           prefix, use_base_model=False, \
-                           use_precomputed_selection=False, figsize=(5,5)):
+                           prefix, use_base_model=False, figsize=(5,5)):
     """ Save visualization of CMCL-based model
     Args:
         config: configuration file including information of save directory
@@ -275,6 +280,71 @@ def save_mcl_visualization(config, data, result, class_name, itow, itoa, \
         #plt.savefig(os.path.join(save_dir, img_filename), bbox_inches="tight", dpi=500)
         plt.savefig(os.path.join(save_dir, img_filename),
                     bbox_inches="tight", dpi=500)
+        plt.close()
+
+def save_ensemble_visualization(config, data, logits, class_name, itow, itoa, \
+                           save_to, prefix, use_base_model=False, figsize=(5,5)):
+    """ Save visualization of CMCL-based model
+    Args:
+        config: configuration file including information of save directory
+        data: list of fourcomponents;
+            [[inputs for network], img_info, selections, base_predictions]
+            - inputs for network: list of items [imgs, qst_labels, qst_lengths,
+                                    (precomputed_selections), answers]
+        logits: list of logit for m models; m * (B, C)
+        itow: dictionary for mapping index to word in questions
+        itoa: dictionary for mapping index to word in answers
+        save_to: directory to save visualizations
+        prefix: name for directory to save visualization
+        figsize: figure size
+    """
+    # create save directory
+    img_dir = config["train_loader"]["img_dir"]
+    save_dir = os.path.join("visualization", save_to)
+    io_utils.check_and_create_dir(save_dir)
+
+    num_data = len(data[0][2])
+    #- inputs for network: list of items [imgs, qst_labels, qst_lengths, answers]
+    for idx in range(num_data):
+        # load image
+        img_path = data[1][idx]
+        img = Image.open(os.path.join(img_dir, img_path)).convert("RGB")
+
+        # convert indices of question into words and get gt and logit
+        question = utils.label2string(itow, data[0][1][idx])
+        gt = utils.label2string(itoa, data[0][-1][idx])
+
+        # create figure
+        fig = plt.figure(figsize=figsize)
+        if use_base_model:
+            gc = gridspec.GridSpec(len(logits)+2+len(data[3]), 14)
+        else:
+            gc = gridspec.GridSpec(len(logits)+2, 14)
+
+        # plot question
+        add_question_row_subplot(fig, gc, [question], 0)
+
+        # plot answers and predictions
+        """ data: list of four components;
+            [[inputs for network], img_info, selections, base_predictions]
+        """
+        is_vqa = config["misc"]["dataset"] == "vqa"
+        logits = [logit[idx] for logit in logits]
+        if use_base_model:
+            for i in range(len(data[3])):
+                logits.append(data[3][i][idx])
+        selections = data[2][idx]
+        add_answer_row_subplot(fig, gc, [logits, selections],\
+                              gt, itoa, 1, class_name)
+        #add_answer_row_subplot(fig, gc, [logits, selections],
+        #                       gt, itoa, 1, is_vqa=is_vqa)
+
+        # save figure and close it
+        img_filename = utils.get_filename_from_path(img_path)
+        img_filename = "{}_{}_{}.png".format(idx, prefix, img_filename)
+        #plt.savefig(os.path.join(save_dir, img_filename), bbox_inches="tight", dpi=500)
+        plt.savefig(os.path.join(save_dir, img_filename),
+                    bbox_inches="tight", dpi=1000)
         plt.close()
 
 def save_confusion_matrix_visualization(config, cm_list, classes, epoch, prefix, fontsize=2,
@@ -339,7 +409,7 @@ def save_confusion_matrix_visualization(config, cm_list, classes, epoch, prefix,
     plt.close()
 
 def save_assignment_visualization(config, assigns, classes, prefix, mode,
-                                  fontsize=2, cmap=plt.cm.Blues, figsize=(5,5)):
+                                  fontsize=2, cmap=plt.cm.Blues, figsize=(7,5)):
     """
     This function saves the confusion matrix.
     Normalization can be applied by setting `normalize=True`.

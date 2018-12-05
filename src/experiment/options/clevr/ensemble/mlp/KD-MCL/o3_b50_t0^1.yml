@@ -1,5 +1,5 @@
 model:
-    checkpoint_path: "results/clevr/ensemble/mlp/KD-MCL/o3_b50_t0^1/checkpoints/checkpoint_epoch_004.pkl"
+    checkpoint_path: ""
     use_gpu: True
     base_model_type: "mlp"
     base_model_ckpt_path: 

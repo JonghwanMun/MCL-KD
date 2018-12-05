@@ -427,6 +427,8 @@ class DataSet(data.Dataset):
 
         self.fetching_answer_option = "simple"
 
+        self.vis_mode = config.get("vis_mode", False)
+
     def __getitem__(self, idx):
         """ Retrun a data (images, question_label, question length and answers)
         Returns:
@@ -475,8 +477,10 @@ class DataSet(data.Dataset):
             base_logits = torch.from_numpy(base_logits["base_logits"][idx])
             out.append(base_logits)
         out.append(answer)
-        out.append(qst_id)
-
+        if self.vis_mode:
+            out.append(img_filename)
+        else:
+            out.append(qst_id)
         return out
 
 
