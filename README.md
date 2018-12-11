@@ -1,9 +1,8 @@
 ## Learning to Specialize with Knowledge Distillation for Visual Question Answering (MCL-KD)
 
 #### 0. Introduction
-This repository is for reproducing a work, Learning to Specialize with Knowledge Distillation for Visual Question Answering, in NIPS 2018. <br />
-Created by [Jonghwan Mun](http://cvlab.postech.ac.kr/~jonghwan/), [Minsu Cho](https://cvlab.postech.ac.kr/~mcho/) and [Bohyung Han](http://cvlab.postech.ac.kr/~bhhan/) at [POSTECH cvlab](http://cvlab.postech.ac.kr/lab/). <br />
-If you want to know details of our paper, please refer to [official paper](https://papers.nips.cc/paper/8031-learning-to-specialize-with-knowledge-distillation-for-visual-question-answering.pdf). <br />
+This repository is for reproducing a work, Learning to Specialize with Knowledge Distillation for Visual Question Answering, presented in NIPS 2018. <br />
+If you want to know details of our paper, please refer to [the official paper](https://papers.nips.cc/paper/8031-learning-to-specialize-with-knowledge-distillation-for-visual-question-answering.pdf). <br />
 Also, if you use this code in a publication, please cite our paper using following bibtex.
 
 ```
@@ -19,10 +18,9 @@ Also, if you use this code in a publication, please cite our paper using followi
 This repository is implemented based on [PyTorch](http://pytorch.org/).
 We recommend you to use anaconda based python environment and please refer to the following documents:
   * Set up [python environment with anaconda](doc/anaconda_environment.md)
-  * Install [PyTorch](doc/pytorch_install.md)
 
 #### 2. Dataset Download
-Please refer to the [Dataset Download](./data/README.md).
+Please refer to the [Dataset Download](./data/README.md)
 
 #### 3. Usage
-Please refer to the [Manual](./doc/usage.md).
+Please refer to the [Manual](./doc/usage.md)
