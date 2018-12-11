@@ -1,4 +1,19 @@
-## VQA using Knowledge Distillation based Multiple Choice Learning (KD-MCL)
+## Learning to Specialize with Knowledge Distillation for Visual Question Answering (MCL-KD)
+
+#### 0. Introduction
+This repository is for reproducing a work, Learning to Specialize with Knowledge Distillation for Visual Question Answering, in NIPS 2018. <br />
+Created by [Jonghwan Mun](http://cvlab.postech.ac.kr/~jonghwan/), [Minsu Cho](https://cvlab.postech.ac.kr/~mcho/) and [Bohyung Han](http://cvlab.postech.ac.kr/~bhhan/) at [POSTECH cvlab](http://cvlab.postech.ac.kr/lab/). <br />
+If you want to know details of our paper, please refer to [official paper](https://papers.nips.cc/paper/8031-learning-to-specialize-with-knowledge-distillation-for-visual-question-answering.pdf). <br />
+Also, if you use this code in a publication, please cite our paper using following bibtex.
+
+```
+@inproceedings{mun2018learning,
+	title={Learning to Specialize with Knowledge Distillation for Visual Question Answering},
+	author={Mun, Jonghwan and Lee, Kimin and Shin, Jinwoo and Han, Bohyung},
+	booktitle={NIPS},
+	year={2018}
+}
+```
 
 #### 1. Dependencies
 This repository is implemented based on [PyTorch](http://pytorch.org/).
