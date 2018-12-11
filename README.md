@@ -22,5 +22,5 @@ We recommend you to use anaconda based python environment and please refer to th
 #### 2. Dataset Download
 Please refer to the [Dataset Download](./data/README.md)
 
-#### 3. Usage
-Please refer to the [Manual](./doc/usage.md)
+#### 3. Experiment
+Please refer to the [Experiment](./doc/experiments.md)

@@ -5,11 +5,11 @@ In this project, we used currently Ubuntu 14.04(Linux), Anaconda3 (with python3.
 After installing [Anaconda](https://www.continuum.io/downloads), it is nice to create a [conda environment](http://conda.pydata.org/docs/using/envs.html)
 so you do not destroy your main installation in case you make a mistake somewhere:
 ```bash
-conda create --name vqa-kdmcl python=3.5
+conda create --name mclkd python=3.5
 ```
 Now you can switch to the new environment in your terminal by running the following (on Linux terminal):
 ```bash
-source activate vqa-kdmcl
+source activate mclkd 
 ```
 
 ### 2. Required Packages

@@ -1,11 +1,17 @@
 # Data Directory
 
-You can either download datasets with following name:
+#### 0. Folder Hierarchy
 - **CLEVR_v1.0**: Directory containing CLEVR v1.0 dataset.
-- **VQA_v2.0**: Directory containing VQA v2.0 dataset with annotations
+- **models**: Directory containing pre-trained models.
 
+
+#### 1. Download CLEVR Dataset
 If you want to download data from web, use the following scripts:
 ```bash
 ./download_clevr.sh
-./download_vqa.sh
+```
+
+#### 2. Download Pre-trained Models
+```bash
+./download_pretrained_models.sh
 ```

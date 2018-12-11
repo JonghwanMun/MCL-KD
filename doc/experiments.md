@@ -1,8 +1,8 @@
 # Experiments
 
-### Training VQA Network using KD-MCL
+### Training VQA Network using MCL-KD
 
-You can train VQA Network using KD-MCL with following command or running `train_model.sh` in script folder.
+You can train VQA Network using MCL-KD with following command or running `train_model.sh` in script folder.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m src.experiment.train \
