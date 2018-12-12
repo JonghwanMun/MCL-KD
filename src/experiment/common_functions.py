@@ -24,8 +24,6 @@ def get_model(base_model_type):
         M = getattr(building_networks, "SAN")
     elif base_model_type in ["mlp", "MLP"]:
         M = getattr(building_networks, "SimpleMLP")
-    elif base_model_type in ["saaa", "SAAA"]:
-        M = getattr(building_networks, "SAAA")
     elif base_model_type in ["ensemble", "ENSEMBLE"]:
         M = getattr(building_networks, "Ensemble")
     else:
@@ -35,8 +33,6 @@ def get_model(base_model_type):
 def get_dataset(dataset):
     if dataset == "clevr":
         D = eval("clevr_dataset")
-    elif dataset == "vqa":
-        D = eval("vqa_dataset")
     else:
         raise NotImplementedError("Not supported model type ({})".format(dataset))
     return D
@@ -108,7 +104,8 @@ def create_logger(config, train_mode=True):
     return logger
 
 """ validate the network """
-def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verbose_every=None):
+def evaluate(config, loader, net, epoch, logger_name="epoch",
+             mode="Train", verbose_every=None):
 
     if verbose_every == None:
         verbose_every = config["evaluation"]["print_every"]
@@ -153,169 +150,6 @@ def evaluate(config, loader, net, epoch, logger_name="epoch", mode="Train", verb
     net.metric = net.counters["top1-avg"].get_average() # would be used for tuning parameter
     net.print_counters_info(epoch+1, logger_name=logger_name, mode=mode)
     net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
-
-""" validate the network with temperature scaling """
-#def evaluate_calibration(config, loader, net, epoch, TT, logger_name="epoch", mode="Train", verbose_every=None):
-def evaluate_calibration(config, loader, net, epoch, logger_name="epoch", mode="Train", verbose_every=None):
-
-    if verbose_every == None:
-        verbose_every = config["evaluation"]["print_every"]
-    # load logger
-    if logger_name == "epoch":
-        logger = io_utils.get_logger("Train")
-    elif logger_name == "eval":
-        logger = io_utils.get_logger("Evaluate")
-    else:
-        raise NotImplementedError()
-
-    net.eval_mode() # set network as evalmode
-    net.reset_status() # reset status
-
-    # initialize counters for different tau
-    metrics = ["top1-avg", "top1-max", "oracle"]
-    tau = [1.0, 1.2, 1.5, 2.0, 5.0, 10.0, 50.0, 100.0]
-    counters = OrderedDict()
-    for T in tau:
-        tau_name = "tau-"+str(T)
-        counters[tau_name] = OrderedDict()
-        for mt in metrics:
-            counters[tau_name][mt] = accumulator.Accumulator(mt)
-
-    """ Run validating network """
-    ii = 0
-    tm = timer.Timer()
-    for batch in loader:
-        data_load_duration = tm.get_duration()
-        # forward the network
-        tm.reset()
-        outputs = net.evaluate(batch)
-        run_duration = tm.get_duration()
-
-        B = batch[0][-1].size()[0]
-        # accumulate the number of correct answers
-        for T in tau:
-            #outputs[1][0][:] = [new_logit / T for new_logit in outputs[1][0]]
-            new_output = [[new_logit / T for new_logit in outputs[1][0]]]
-            net.compute_status(new_output, batch[0][-1])
-
-            tau_name = "tau-"+str(T)
-            for mt in metrics:
-                counters[tau_name][mt].add(net.status[mt]*B, B)
-
-        # print learning information
-        if ((verbose_every > 0) and ((ii+1) % verbose_every == 0)) \
-                or config["misc"]["debug"]:
-            net.print_status(epoch+1, ii+1, mode="eval")
-            txt = "[TEST] fetching for {:.3f}s, inference for {:.3f}s\n"
-            logger.debug(txt.format(data_load_duration, run_duration))
-
-        ii += 1
-        tm.reset()
-
-        if (config["misc"]["debug"]) and (ii > 5):
-            break
-        # end for batch in loader
-
-    logger.info("\nAt epoch {}".format(epoch+1))
-    for cnt_k,cnt_v in counters.items():
-        txt = cnt_k + " "
-        for k,v in cnt_v.items():
-            txt += ", {} = {:.5f}".format(v.get_name(), v.get_average())
-        print(txt)
-        logger.info(txt)
-
-    """
-    net.metric = net.counters["top1-avg"].get_average() # would be used for tuning parameter
-    net.print_counters_info(epoch+1, logger_name=logger_name, mode=mode)
-    net.save_results(None, "epoch_{:03d}".format(epoch+1), mode="eval")
-    """
-
-def test_inference(config, loader, net):
-
-    net.eval_mode() # set network as evalmode
-    net.reset_status()
-
-    """ Run validating network """
-    ii = 0
-    print_every = 50
-    counter = OrderedDict()
-    counter["top1-avg"] = accumulator.Accumulator("top1-avg")
-    counter["acc-1"] = accumulator.Accumulator("acc-1")
-    counter["acc-2"] = accumulator.Accumulator("acc-2")
-    for batch in tqdm(loader):
-        ii += 1
-        # forward the network
-        outputs = net.predict(batch)
-        logits = outputs[0][0]
-        gts = batch[0][-1][0]
-
-        mode = 1
-        if net.classname in ["ENSEMBLE"]:
-            # compute top1-avg
-            B = logits[0].size(0)
-            prob_list = [F.softmax(logit, dim=1) for logit in logits]
-            probs = torch.mean(torch.stack(prob_list, 0 ), dim=0)
-            _, idx = net_utils.get_data(probs).max(dim=1)
-            mask = torch.eq(idx, gts)
-            num_correct = torch.sum(mask)
-            #print("ENS", mask.view(1,-1))
-            top1 = num_correct / B
-            counter["top1-avg"].add(num_correct, B)
-
-            if mode == 1:
-                masks, true_masks = net.get_oracle_mask(logits, gts)
-                print(torch.stack(masks, 0))
-                print(torch.stack(true_masks, 0))
-                cidx = 0
-                diff = masks[cidx] - masks[cidx+1]
-                stack_mask = torch.stack(true_masks, dim=0)
-                idx = stack_mask.long().sum(dim=0).nonzero()
-                for i in idx:
-                    cidx = stack_mask[:,i[0]].nonzero()
-                    print("\n========== at", i[0], " | correct model: ",
-                          #"-".join(c[0] for c in cidx[0])
-                          cidx, " | gt: ", gts[i][0])
-                    net_utils.compute_single_variance(
-                        net_utils.make_list_at(logits, i[0]), gts[i]
-                    )
-
-            else:
-                #k = config["model"]["num_overlaps"]
-                k = 2
-                num_correct, B, tmp_logit_list = \
-                        net_utils.compute_best_accuracy(logits, gts, k, 1)
-                acc1 = num_correct / B
-                counter["acc-1"].add(num_correct, B)
-
-                #num_correct, B, _ = net_utils.compute_best_accuracy(
-                #        tmp_logit_list, gts, 1, 1)
-                acc2 = num_correct / B
-                counter["acc-2"].add(num_correct, B)
-
-        else:
-            raise NotImplementedError()
-
-        if mode == 0 and (ii % print_every) == 0:
-            print("Iter {} top1: {}  |  acc-1: {}".format(ii, top1, acc1, acc2))
-            txt = ""
-            for k,v in counter.items():
-                txt += "{} = {:.5f}, ".format(v.get_name(), v.get_average())
-            print(txt + \
-                  " acc1 - top1 = {:5f}".format(
-                counter["acc-1"].get_average()-counter["top1-avg"].get_average())
-                  + " acc2 - top1 = {:5f}".format(
-                counter["acc-2"].get_average()-counter["top1-avg"].get_average())
-                  )
-
-        if (config["misc"]["debug"]) and (ii > 2):
-            break
-        # end for batch in loader
-
-    if mode == 0:
-        txt = "Final scores ==> "
-        for k,v in counter.items():
-            txt += ", {} = {:.5f}".format(v.get_name(), v.get_average())
-        print(txt)
 
 
 """ get assignment values for data """

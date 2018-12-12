@@ -3,24 +3,21 @@
 .ipynb_checkpoints
 ipython_notebooks/
 
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files / swap files
 __pycache__/
 *.py[cod]
 *$py.class
 .cache
-
-# external sources
-#src/external/refer
+*.swp
 
 # data
 data/CLEVR_v1.0
 data/VQA_v2.0
 
 # options
-src/experiment/options
+#src/experiment/options
 
 # misc files/directories
-.gitignore
 results/
 tensorboard/
 logs/

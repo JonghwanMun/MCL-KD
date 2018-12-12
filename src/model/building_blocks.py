@@ -412,8 +412,6 @@ class StackedAttention(nn.Module):
         ctxs = (replicated_img_feat * replicated_att_weights).sum(3).sum(3) # [B, s, K]
         ctxs = ctxs.view(B, self.num_stacks*K)
 
-        return ctxs, self.att_weights
-
     def print_status(self, logger, prefix=""):
         for ns in range(self.num_stacks):
             logger.info(
@@ -441,20 +439,6 @@ class EnsembleLoss(nn.Module):
         self.k = utils.get_value_from_dict(config, "num_overlaps", 2)
         self.tau  = utils.get_value_from_dict(config, "tau", -1)
         self.beta = utils.get_value_from_dict(config, "beta", 0.75)
-        self.use_initial_assignment = \
-                utils.get_value_from_dict(config, "use_initial_assignment", False)
-        self.use_adaptive_assignment = \
-                utils.get_value_from_dict(config, "use_adaptive_assignment", False)
-        self.assignment_with_only_task_loss = \
-                utils.get_value_from_dict(config, "assignment_with_only_task_loss", False)
-        if self.use_adaptive_assignment:
-            self.adaptive_threshold = \
-                    utils.get_value_from_dict(config, "adaptive_threshold", 0.8)
-        self.apply_uniform_sampling_k = \
-                utils.get_value_from_dict(config, "apply_uniform_sampling_k", False)
-        if self.apply_uniform_sampling_k:
-            self.sampling_k_every = \
-                utils.get_value_from_dict(config, "sampling_k_every", 1000)
 
         # options for margin-MCL
         self.margin_threshold = utils.get_value_from_dict(
@@ -556,23 +540,15 @@ class EnsembleLoss(nn.Module):
 
             oracle_loss_list = []
             num_combinations = len(assign_idx)
-            if self.assignment_with_only_task_loss:
-                real_oracle_loss_list = []
             for nc in range(num_combinations):
                 specialized = [task_loss_list[idx] for idx in assign_idx[nc]]
                 non_specialized = [nonspecialist_loss_list[idx] for idx in not_assign_idx[nc]]
 
-                if self.assignment_with_only_task_loss:
-                    oracle_loss_list.append(sum(specialized))
-                    real_oracle_loss_list.append(sum(specialized) + sum(non_specialized))
-                else:
-                    oracle_loss_list.append(sum(specialized) + sum(non_specialized))
+                oracle_loss_list.append(sum(specialized) + sum(non_specialized))
 
             # select best assignment
             oracle_loss_tensor = torch.stack(oracle_loss_list, dim=0) # [nc,B]
             min_val, min_idx = oracle_loss_tensor.t().min(dim=1) # [B,nc] -> [B,]
-            if self.assignment_with_only_task_loss:
-                raw_min_idx = min_idx
             min_idx = net_utils.get_assignment4batch(
                     assign_idx, net_utils.get_data(min_idx)) # [max_k,B]
             if self.use_gpu and torch.cuda.is_available():
