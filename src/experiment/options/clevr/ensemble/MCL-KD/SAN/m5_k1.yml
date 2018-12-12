@@ -1,0 +1,82 @@
+model:
+    checkpoint_path: ""
+    use_gpu: True
+    base_model_type: "san"
+    base_model_ckpt_path: 
+        - "models/CLEVR/base_models/SAN/M1.pkl"
+        - "models/CLEVR/base_models/SAN/M2.pkl"
+        - "models/CLEVR/base_models/SAN/M3.pkl"
+        - "models/CLEVR/base_models/SAN/M4.pkl"
+        - "models/CLEVR/base_models/SAN/M5.pkl"
+    loss_reduce: False
+    # image embedding layer
+    apply_l2_norm: False
+    img_emb_num_blocks: 2
+    img_emb_res_block_2d_inp_dim: 1024
+    img_emb_res_block_2d_out_dim: 1024
+    img_emb_res_block_2d_hidden_dim: 128
+    # question embedding layer
+    word_emb_dim: 300
+    word_emb_padding_idx: 0
+    word_emb_dropout_prob: 0
+    apply_word_emb_nonlinear: False
+    rnn_type: "LSTM"
+    rnn_num_layers: 1
+    rnn_hidden_dim: 256
+    rnn_dropout_prob: 0
+    use_last_hidden: True
+    # SAN layer
+    num_stacks: 2
+    qst_emb_dim: -1 # will be assigned to answer_mlp_out_dim
+    img_emb_dim: -1 # will be assigned to img_emb_res_block_2d_out_dim
+    att_emb_dim: 512
+    att_dropout_prob: 0
+    # classification layer
+    answer_mlp_inp_dim: -1 # will be assigned automatically
+    answer_mlp_out_dim: -1 # will be assigned to num_labels
+    answer_mlp_hidden_dim: [1024,]
+    answer_mlp_dropout_prob: 0
+    answer_mlp_use_batchnorm: False
+    answer_mlp_nonlinear_fn: "ReLU"
+    # Ensemble criterion
+    version: "KD-MCL"
+    num_models: 5
+    num_overlaps: 1
+    beta: 50
+    tau: 0.1
+    use_knowledge_distillation: True
+    apply_curriculum_learning_after: -1
+    new_loss: "KD-MCL"
+train_loader:
+    encoded_json_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_train.json"
+    encoded_hdf5_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_train.h5"
+    batch_size: 64
+    use_gpu: True
+    use_img: False
+    img_size: 224
+    img_dir: "data/CLEVR_v1.0/images"
+    feat_dir: "data/CLEVR_v1.0/feats/resnet_conv4_feats"
+test_loader:
+    encoded_json_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_val.json"
+    encoded_hdf5_path: "data/CLEVR_v1.0/preprocess/encoded_qa/vocab_train_raw/all_questions_use_zero_token_max_qst_len_45/qa_val.h5"
+    selection_path: ""
+    batch_size: 32
+    use_gpu: True
+    use_img: False
+    img_size: 224
+    img_dir: "data/CLEVR_v1.0/images"
+    feat_dir: "data/CLEVR_v1.0/feats/resnet_conv4_feats"
+optimize:
+    num_epoch: 50
+    init_lr: 0.0005
+    decay_factor: 0.8
+    decay_every_epoch: -1
+evaluation:
+    every_eval: 2
+    print_every: 100
+logging:
+    print_level: "DEBUG"
+    write_level: "INFO"
+misc:
+    print_every: 100
+    vis_every: -1
